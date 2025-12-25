@@ -27,6 +27,7 @@ jobs:
           HZH_USER_TOKEN: ${{ secrets.HZH_USER_TOKEN }}
           HZH_SK_VALUE: ${{ secrets.HZH_SK_VALUE }}
           HZH_RAW_COOKIE: ${{ secrets.HZH_RAW_COOKIE }}
+          PUSHPLUS_TOKEN: ${{ secrets.PUSHPLUS_TOKEN }} 
         run: python hzh_signin.py
 
       # 自动提交一个日志，防止60天不更新仓库导致任务停止
