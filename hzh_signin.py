@@ -6,11 +6,34 @@ import os
 from datetime import datetime
 
 # ================= 配置区域 =================
-# 从 GitHub Secrets 读取
-ACCOUNTS_JSON = os.getenv("HZH_ACCOUNTS")
-PUSHPLUS_TOKEN = os.getenv("PUSHPLUS_TOKEN")
+USER_TOKEN = os.getenv("HZH_USER_TOKEN")
+SK_VALUE = os.getenv("HZH_SK_VALUE")
 USER_AGENT = "HUAZHU/android/PDRM00/13/8.10.2/RNWEBVIEW"
+RAW_COOKIE = os.getenv("HZH_RAW_COOKIE")
 PUSHPLUS_TOKEN = os.getenv("PUSHPLUS_TOKEN")
+# ===========================================
+
+def send_pushplus(content):
+    """发送 PushPlus 通知"""
+    if not PUSHPLUS_TOKEN:
+        print("ℹ️ 未配置 PUSHPLUS_TOKEN，跳过微信推送。")
+        return
+    
+    url = "http://www.pushplus.plus/send"
+    payload = {
+        "token": PUSHPLUS_TOKEN,
+        "title": "华住签到任务报告",
+        "content": content.replace("\n", "<br>"), # 将换行符转为 HTML 换行
+        "template": "html"
+    }
+    try:
+        response = requests.post(url, json=payload, timeout=10)
+        if response.status_code == 200:
+            print("🔔 微信推送成功")
+        else:
+            print(f"❌ 微信推送失败: {response.text}")
+    except Exception as e:
+        print(f"🚨 推送接口异常: {str(e)}")
 
 def get_timestamp():
     now = time.time()
@@ -21,51 +44,30 @@ def update_cookie(cookie, new_ms_ts):
     replacement = r'\g<1>' + str(new_ms_ts) + r'\g<3>'
     return re.sub(pattern, replacement, cookie)
 
-def send_pushplus(content):
-    """发送微信通知"""
-    if not PUSHPLUS_TOKEN:
-        print("ℹ️ 未配置 PUSHPLUS_TOKEN，跳过推送")
-        return
-    
-    url = "http://www.pushplus.plus/send"
-    # 使用 <br/> 是因为 PushPlus 的 HTML 模板用它换行
-    data = {
-        "token": PUSHPLUS_TOKEN,
-        "title": "华住签到任务报告",
-        "content": content.replace("\n", "<br/>"),
-        "template": "html"
-    }
-    try:
-        response = requests.post(url, json=data, timeout=10)
-        if response.status_code == 200:
-            print("📩 推送结果已发送到微信")
-        else:
-            print(f"❌ 推送失败，状态码：{response.status_code}")
-    except Exception as e:
-        print(f"🚨 推送报错：{str(e)}")
-
-def do_sign_in(account_info, index):
-    """执行单个账号签到并返回结果字符串"""
-    token = account_info.get("token")
-    sk = account_info.get("sk")
-    raw_cookie = account_info.get("cookie")
-    
+def do_sign_in():
     ts_sec, ts_ms = get_timestamp()
     url = f"https://appgw.huazhu.com/game/sign_in?date={ts_sec}"
-    current_cookie = update_cookie(raw_cookie, ts_ms)
+    current_cookie = update_cookie(RAW_COOKIE, ts_ms)
     
     headers = {
         'Host': 'appgw.huazhu.com',
+        'Connection': 'keep-alive',
         'Accept': 'application/json, text/plain, */*',
         'Client-Platform': 'APP-ANDROID',
         'User-Agent': USER_AGENT,
+        'X-Requested-With': 'com.htinns',
+        'Referer': 'https://cdn.huazhu.com/',
+        'Accept-Encoding': 'gzip, deflate',
+        'Accept-Language': 'zh-CN,zh;q=0.9,en-US;q=0.8,en;q=0.7',
         'Cookie': current_cookie,
-        'userToken': token,
-        'SK': sk
+        'userToken': USER_TOKEN,
+        'SK': SK_VALUE
     }
 
-    result = f"【账号 {index+1}】\n"
-    
+    # 用于累积通知内容
+    report_list = []
+    report_list.append(f"<b>📅 运行时间：</b>{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+
     try:
         response = requests.get(url, headers=headers, timeout=10)
         if response.status_code == 200:
@@ -77,40 +79,39 @@ def do_sign_in(account_info, index):
                 content = data.get("content", {})
                 point = content.get("point", 0)
                 act_point = content.get("activityPoints", 0)
-                result += f"✅ 签到成功\n🎁 获得：{point}积分，{act_point}活跃值\n"
+                report_list.append("<b>✅ 状态：签到成功！</b>")
+                report_list.append(f"💰 获得积分：{point}")
+                report_list.append(f"🌟 活跃分值：{act_point}")
                 
+                # 盲盒/额外奖励处理
                 awards = content.get("award", [])
                 if awards:
-                    award_names = [a.get('awardName') for a in awards]
-                    result += f"🎊 盲盒：{', '.join(award_names)}\n"
+                    report_list.append("🎁 <b>盲盒奖励：</b>")
+                    for a in awards:
+                        report_list.append(f"  - {a.get('awardName')}")
+                else:
+                    report_list.append("🎁 盲盒奖励：无")
+                    
             elif code == 5004 or "已签到" in msg:
-                result += f"ℹ️ 提示：当日已签到过啦\n"
+                report_list.append(f"<b>ℹ️ 状态：任务已完成</b>")
+                report_list.append(f"提示信息：{msg}")
             else:
-                result += f"❌ 失败：{msg} (Code: {code})\n"
+                report_list.append(f"<b>❌ 状态：签到失败</b>")
+                report_list.append(f"原因：{msg} (Code: {code})")
         else:
-            result += f"⚠️ 网络异常，状态码：{response.status_code}\n"
+            report_list.append(f"<b>⚠️ 网络异常</b>")
+            report_list.append(f"状态码：{response.status_code}")
             
     except Exception as e:
-        result += f"🚨 报错：{str(e)}\n"
+        report_list.append(f"<b>🚨 脚本运行报错</b>")
+        report_list.append(f"错误细节：{str(e)}")
+
+    # 打印到控制台（GitHub Action 日志可见）
+    final_report = "\n".join(report_list)
+    print(final_report)
     
-    print(result) # 控制台也打印一份
-    return result
+    # 发送到微信
+    send_pushplus(final_report)
 
 if __name__ == "__main__":
-    if not ACCOUNTS_JSON:
-        print("❌ 未设置 HZH_ACCOUNTS")
-        exit(1)
-        
-    accounts = json.loads(ACCOUNTS_JSON)
-    summary_list = []
-    summary_list.append(f"⏰ 时间：{datetime.now().strftime('%Y-%m-%d %H:%M')}")
-    
-    for i, acc in enumerate(accounts):
-        res = do_sign_in(acc, i)
-        summary_list.append(res)
-        if i < len(accounts) - 1:
-            time.sleep(5)
-            
-    # 合并所有账号的结果发推送
-    final_report = "\n".join(summary_list)
-    send_pushplus(final_report)
+    do_sign_in()
