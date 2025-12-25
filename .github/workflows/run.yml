@@ -1,0 +1,40 @@
+name: HZH Daily Signin
+
+on:
+  schedule:
+    # 每天北京时间早上 7:30 运行 (UTC 23:30)
+    - cron: '30 23 * * *'
+  workflow_dispatch: # 允许手动运行
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.9'
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Run script
+        env:
+          # 将刚才在 Settings 里配置的 Secrets 映射给脚本
+          HZH_USER_TOKEN: ${{ secrets.HZH_USER_TOKEN }}
+          HZH_SK_VALUE: ${{ secrets.HZH_SK_VALUE }}
+          HZH_RAW_COOKIE: ${{ secrets.HZH_RAW_COOKIE }}
+        run: python hzh_signin.py
+
+      # 自动提交一个日志，防止60天不更新仓库导致任务停止
+      - name: Keep Alive
+        run: |
+          git config --local user.email "actions@github.com"
+          git config --local user.name "GitHub Action"
+          echo "Last Run: $(date)" > run_log.txt
+          git add run_log.txt
+          git commit -m "update log" || exit 0
+          git push
