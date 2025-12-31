@@ -22,7 +22,7 @@ def send_pushplus(content):
     url = "http://www.pushplus.plus/send"
     payload = {
         "token": PUSHPLUS_TOKEN,
-        "title": "华住签到任务报告",
+        "title": "华住签到调试报告", # 修改标题以便区分
         "content": content.replace("\n", "<br>"), # 将换行符转为 HTML 换行
         "template": "html"
     }
@@ -72,6 +72,15 @@ def do_sign_in():
         response = requests.get(url, headers=headers, timeout=10)
         if response.status_code == 200:
             data = response.json()
+
+            # ================= 调试代码开始 =================
+            # 无论成功失败，先把原始 JSON 格式化并加入报告
+            # ensure_ascii=False 保证中文正常显示
+            raw_json_debug = json.dumps(data, ensure_ascii=False, indent=2)
+            report_list.append("<br><b>🐛 [调试] 原始响应数据：</b>")
+            report_list.append(f"<pre>{raw_json_debug}</pre>") # 使用 pre 标签保持 JSON 缩进格式
+            # ================= 调试代码结束 =================
+
             code = data.get("code")
             msg = data.get("message")
             
@@ -83,14 +92,15 @@ def do_sign_in():
                 report_list.append(f"💰 获得积分：{point}")
                 report_list.append(f"🌟 活跃分值：{act_point}")
                 
-                # 盲盒/额外奖励处理
+                # 盲盒/额外奖励处理 (旧逻辑保留，方便对比)
                 awards = content.get("award", [])
                 if awards:
                     report_list.append("🎁 <b>盲盒奖励：</b>")
                     for a in awards:
-                        report_list.append(f"  - {a.get('awardName')}")
+                        # 尝试增加鲁棒性，打印整个 award 对象
+                        report_list.append(f"  - {str(a)}")
                 else:
-                    report_list.append("🎁 盲盒奖励：无")
+                    report_list.append("🎁 盲盒奖励：无 (根据当前逻辑)")
                     
             elif code == 5004 or "已签到" in msg:
                 report_list.append(f"<b>ℹ️ 状态：任务已完成</b>")
