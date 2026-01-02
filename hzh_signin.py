@@ -13,7 +13,7 @@ RAW_COOKIE = os.getenv("HZH_RAW_COOKIE")
 PUSHPLUS_TOKEN = os.getenv("PUSHPLUS_TOKEN")
 # ===========================================
 
-def send_pushplus(content):
+def send_pushplus(title, content):
     """发送 PushPlus 通知"""
     if not PUSHPLUS_TOKEN:
         print("ℹ️ 未配置 PUSHPLUS_TOKEN，跳过微信推送。")
@@ -22,8 +22,8 @@ def send_pushplus(content):
     url = "http://www.pushplus.plus/send"
     payload = {
         "token": PUSHPLUS_TOKEN,
-        "title": "华住签到调试报告", # 修改标题以便区分
-        "content": content.replace("\n", "<br>"), # 将换行符转为 HTML 换行
+        "title": title,
+        "content": content.replace("\n", "<br>"),
         "template": "html"
     }
     try:
@@ -64,23 +64,10 @@ def do_sign_in():
         'SK': SK_VALUE
     }
 
-    # 用于累积通知内容
-    report_list = []
-    report_list.append(f"<b>📅 运行时间：</b>{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
-
     try:
         response = requests.get(url, headers=headers, timeout=10)
         if response.status_code == 200:
             data = response.json()
-
-            # ================= 调试代码开始 =================
-            # 无论成功失败，先把原始 JSON 格式化并加入报告
-            # ensure_ascii=False 保证中文正常显示
-            raw_json_debug = json.dumps(data, ensure_ascii=False, indent=2)
-            report_list.append("<br><b>🐛 [调试] 原始响应数据：</b>")
-            report_list.append(f"<pre>{raw_json_debug}</pre>") # 使用 pre 标签保持 JSON 缩进格式
-            # ================= 调试代码结束 =================
-
             code = data.get("code")
             msg = data.get("message")
             
@@ -88,40 +75,80 @@ def do_sign_in():
                 content = data.get("content", {})
                 point = content.get("point", 0)
                 act_point = content.get("activityPoints", 0)
-                report_list.append("<b>✅ 状态：签到成功！</b>")
-                report_list.append(f"💰 获得积分：{point}")
-                report_list.append(f"🌟 活跃分值：{act_point}")
+                year_count = content.get("yearSignInCount", 0)
                 
-                # 盲盒/额外奖励处理 (旧逻辑保留，方便对比)
+                # 获取实际获得的奖励（awardGetType 为 "1" 的才是已获得）
                 awards = content.get("award", [])
-                if awards:
-                    report_list.append("🎁 <b>盲盒奖励：</b>")
-                    for a in awards:
-                        # 尝试增加鲁棒性，打印整个 award 对象
-                        report_list.append(f"  - {str(a)}")
+                obtained_awards = [a for a in awards if a.get("awardGetType") == "1"]
+                
+                # 构建标题：直观展示关键信息
+                if obtained_awards:
+                    award_names = ", ".join([a.get("awardName", "未知") for a in obtained_awards])
+                    title = f"✅ 签到成功 | +{point}积分 +{act_point}活跃 | 🎁{award_names} | 年度{year_count}天"
                 else:
-                    report_list.append("🎁 盲盒奖励：无 (根据当前逻辑)")
+                    title = f"✅ 签到成功 | +{point}积分 +{act_point}活跃 | 年度{year_count}天"
+                
+                # 详细内容
+                report_list = []
+                report_list.append(f"<b>📅 签到时间：</b>{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+                report_list.append(f"<b>💰 基础积分：</b>+{point}")
+                report_list.append(f"<b>🌟 活跃分值：</b>+{act_point}")
+                report_list.append(f"<b>📆 年度签到：</b>{year_count} 天")
+                
+                if obtained_awards:
+                    report_list.append("<b>🎁 盲盒奖励：</b>")
+                    for a in obtained_awards:
+                        name = a.get("awardName", "未知")
+                        value = a.get("awardValue", "")
+                        if value:
+                            report_list.append(f"  • {name}（{value}）")
+                        else:
+                            report_list.append(f"  • {name}")
+                else:
+                    report_list.append("<b>🎁 盲盒奖励：</b>今日无盲盒")
+                
+                final_report = "\n".join(report_list)
+                print(title)
+                print(final_report)
+                send_pushplus(title, final_report)
                     
             elif code == 5004 or "已签到" in msg:
-                report_list.append(f"<b>ℹ️ 状态：任务已完成</b>")
-                report_list.append(f"提示信息：{msg}")
+                title = f"ℹ️ 今日已签到"
+                report_list = []
+                report_list.append(f"<b>📅 检查时间：</b>{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+                report_list.append(f"<b>提示信息：</b>{msg}")
+                final_report = "\n".join(report_list)
+                print(title)
+                print(final_report)
+                send_pushplus(title, final_report)
             else:
-                report_list.append(f"<b>❌ 状态：签到失败</b>")
-                report_list.append(f"原因：{msg} (Code: {code})")
+                title = f"❌ 签到失败 (Code: {code})"
+                report_list = []
+                report_list.append(f"<b>📅 失败时间：</b>{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+                report_list.append(f"<b>错误原因：</b>{msg}")
+                final_report = "\n".join(report_list)
+                print(title)
+                print(final_report)
+                send_pushplus(title, final_report)
         else:
-            report_list.append(f"<b>⚠️ 网络异常</b>")
-            report_list.append(f"状态码：{response.status_code}")
+            title = f"⚠️ 网络异常 (状态码: {response.status_code})"
+            report_list = []
+            report_list.append(f"<b>📅 异常时间：</b>{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+            report_list.append(f"<b>状态码：</b>{response.status_code}")
+            final_report = "\n".join(report_list)
+            print(title)
+            print(final_report)
+            send_pushplus(title, final_report)
             
     except Exception as e:
-        report_list.append(f"<b>🚨 脚本运行报错</b>")
-        report_list.append(f"错误细节：{str(e)}")
-
-    # 打印到控制台（GitHub Action 日志可见）
-    final_report = "\n".join(report_list)
-    print(final_report)
-    
-    # 发送到微信
-    send_pushplus(final_report)
+        title = f"🚨 脚本运行异常"
+        report_list = []
+        report_list.append(f"<b>📅 异常时间：</b>{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+        report_list.append(f"<b>错误细节：</b>{str(e)}")
+        final_report = "\n".join(report_list)
+        print(title)
+        print(final_report)
+        send_pushplus(title, final_report)
 
 if __name__ == "__main__":
     do_sign_in()
