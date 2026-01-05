@@ -399,41 +399,170 @@ class YP:
 
         self.log(f"\n☁️ 待领: {recv} | 总云朵: {total}")
         if pending: self.log(f"🎁 未领奖品: {pending}")
+            
+    @catch_errors
+    def view_all_tasks(self):
+        """查看所有任务状态"""
+        self.log("\n" + "="*50)
+        self.log("📋 【云盘任务状态】")
+        self.log("="*50)
+        
+        url = 'https://caiyun.feixin.10086.cn/market/signin/task/taskList?marketname=sign_in_3'
+        res = self.send_request(url, headers=self.jwtHeaders, cookies=self.cookies).json()
+        
+        if res.get('msg') != 'success':
+            self.log(f"❌ 获取任务列表失败: {res.get('msg')}")
+            return
+        
+        task_list = res.get('result', {})
+        
+        # 任务类型映射
+        type_map = {
+            'day': '每日任务',
+            'month': '每月任务', 
+            'new': '新手任务',
+            'hidden': '隐藏任务'
+        }
+        
+        # 状态映射
+        state_map = {
+            'FINISH': '✅ 已完成',
+            'WAIT': '⏳ 待完成',
+            'PROCESS': '🔄 进行中'
+        }
+        
+        # 需要跳过的任务ID（已废弃/无法完成的）
+        skip_tasks = [110, 113, 417, 409, 404]
+        
+        for task_type, tasks in task_list.items():
+            if task_type in ["new", "hidden", "hiddenabc"]:
+                continue
+                
+            type_name = type_map.get(task_type, task_type)
+            self.log(f"\n【{type_name}】")
+            self.log("-" * 50)
+            
+            if not tasks:
+                self.log("  (暂无任务)")
+                continue
+            
+            for task in tasks:
+                task_id = task.get('id')
+                task_name = task.get('name', '未知任务')
+                task_state = task.get('state', 'UNKNOWN')
+                description = task.get('description', '')
+                process = task.get('process', 0)
+                
+                # 判断是否为跳过任务
+                skip_mark = " [已废弃]" if task_id in skip_tasks else ""
+                
+                # 格式化状态
+                state_icon = state_map.get(task_state, f'❓ {task_state}')
+                
+                # 显示进度
+                if task_state == 'PROCESS':
+                    progress = f" ({process}%)"
+                else:
+                    progress = ""
+                
+                # 输出任务信息
+                self.log(f"  [{task_id:3d}] {state_icon}{progress} | {task_name}{skip_mark}")
+                if description:
+                    self.log(f"        奖励: {description}")
+        
+        self.log("\n" + "="*50)
+        
+        # 邮箱任务
+        self.log("\n📧 【邮箱任务状态】")
+        self.log("="*50)
+        
+        email_url = 'https://caiyun.feixin.10086.cn/market/signin/task/taskList?marketname=newsign_139mail'
+        email_res = self.send_request(email_url, headers=self.jwtHeaders, cookies=self.cookies).json()
+        
+        if email_res.get('msg') == 'success':
+            email_tasks = email_res.get('result', {})
+            skip_email = [1004, 1005, 1015, 1020]
+            
+            for task_type, tasks in email_tasks.items():
+                if task_type in ["new", "hidden", "hiddenabc"]:
+                    continue
+                    
+                type_name = type_map.get(task_type, task_type)
+                self.log(f"\n【{type_name}】")
+                self.log("-" * 50)
+                
+                if not tasks:
+                    self.log("  (暂无任务)")
+                    continue
+                
+                for task in tasks:
+                    task_id = task.get('id')
+                    task_name = task.get('name', '未知任务')
+                    task_state = task.get('state', 'UNKNOWN')
+                    description = task.get('description', '')
+                    
+                    skip_mark = " [已废弃]" if task_id in skip_email else ""
+                    state_icon = state_map.get(task_state, f'❓ {task_state}')
+                    
+                    self.log(f"  [{task_id:4d}] {state_icon} | {task_name}{skip_mark}")
+                    if description:
+                        self.log(f"         奖励: {description}")
+        
+        self.log("\n" + "="*50 + "\n")
 
     # ================= 流程入口 =================
 
-    def run(self):
-        if not self.Authorization: return f"❌ 账号 {self.encrypt_account} 配置错误\n"
+    def run(self, view_only=False):
+        """
+        运行任务
+        view_only: True=仅查看任务状态，False=执行任务
+        """
+        if not self.Authorization: 
+            return f"❌ 账号 {self.encrypt_account} 配置错误\n"
         
         self.log(f"========== 用户 [{self.encrypt_account}] ==========")
         
-        if self.jwt():
-            self.signin_status()
-            self.click()
-            self.wxsign()
-            self.get_tasklist(url_name='sign_in_3', app_type='cloud_app')
-            self.shake()
-            self.surplus_num()
-            self.backup_cloud()
-            self.open_send()
-            self.get_tasklist(url_name='newsign_139mail', app_type='email_app')
-            self.receive()
-        else:
+        if not self.jwt():
             self.log("❌ 登录失败 (SSO/JWT错误)")
-            
+            return self.log_str
+        
+        # 如果只查看任务状态
+        if view_only:
+            self.view_all_tasks()
+            return self.log_str
+        
+        # 执行任务流程
+        self.signin_status()
+        self.click()
+        self.wxsign()
+        self.get_tasklist(url_name='sign_in_3', app_type='cloud_app')
+        self.shake()
+        self.surplus_num()
+        self.backup_cloud()
+        self.open_send()
+        self.get_tasklist(url_name='newsign_139mail', app_type='email_app')
+        self.receive()
+        
         return self.log_str
 
 # 模块导出函数
-def run_ydyp():
-    full_log = "【移动云盘任务】\n"
+def run_ydyp(view_only=True):
+    """
+    view_only=True: 仅查看任务状态
+    view_only=False: 执行任务（默认）
+    """
+    mode_text = "任务状态查看" if view_only else "任务执行"
+    full_log = f"【移动云盘 - {mode_text}】\n"
+    
     if not ydypCK:
         return full_log + "⛔️ 未配置 YDYP_CK\n"
 
     cookies = re.split(r'[&\n]', ydypCK)
     for i, account in enumerate(cookies, 1):
-        if not account.strip(): continue
+        if not account.strip(): 
+            continue
         yp = YP(account)
-        full_log += yp.run() + "\n"
+        full_log += yp.run(view_only=view_only) + "\n"
         time.sleep(3)
         
     return full_log
