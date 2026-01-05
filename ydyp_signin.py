@@ -3,6 +3,8 @@ import random
 import re
 import time
 import requests
+import json
+from datetime import datetime, timezone, timedelta
 
 # ================= 配置区域 =================
 ydypCK = os.getenv("YDYP_CK") 
@@ -22,16 +24,25 @@ class YP:
         self.timestamp = str(int(round(time.time() * 1000)))
         self.cookies = {'sensors_stay_time': self.timestamp}
         
+        # [修改] 解析 CK，增加 YUN_UNI 读取
         try:
             parts = cookie.split("#")
             self.Authorization = parts[0]
             self.account = parts[1]
             self.auth_token = parts[2]
+            # 尝试读取第4个参数，兼容旧格式防止报错
+            if len(parts) > 3:
+                self.yun_uni = parts[3]
+            else:
+                self.yun_uni = None
+                self.log("⚠️ 警告: CK格式缺少 YUN_UNI，上传任务将失败")
+            
             self.encrypt_account = self.account[:3] + "****" + self.account[7:]
         except:
             self.Authorization = None
             self.account = "Unknown"
             self.auth_token = ""
+            self.yun_uni = None
             self.encrypt_account = "格式错误"
 
         self.jwtHeaders = {
@@ -74,7 +85,6 @@ class YP:
             resp.raise_for_status()
             return resp
         except Exception as e:
-            # self.log(f"请求异常: {e}") # 过于啰嗦，关掉
             return None
 
     # ================= 核心逻辑 =================
@@ -158,18 +168,15 @@ class YP:
         for task_type, tasks in task_list.items():
             if task_type in ["new", "hidden", "hiddenabc"]: continue
             
-            # 这里简化逻辑，只处理 cloud_app 和 email_app 的 month/day 任务
             if app_type in ['cloud_app', 'email_app'] and task_type in ['month', 'day']:
-                prefix = "云盘" if app_type == 'cloud_app' else "邮箱"
-                period = "月" if task_type == 'month' else "日"
+                # prefix = "云盘" if app_type == 'cloud_app' else "邮箱"
+                # period = "月" if task_type == 'month' else "日"
                 
-                # self.log(f'\n📆 {prefix}{period}任务检查')
                 for task in tasks:
                     task_id = task.get('id')
                     task_name = task.get('name', '')
                     task_state = task.get('state', '')
                     
-                    # 过滤不需要做的任务ID (原脚本逻辑)
                     if app_type == 'cloud_app' and task_id in [110, 113, 417, 409, 404]: continue
                     if app_type == 'email_app' and task_id in [1004, 1005, 1015, 1020]: continue
 
@@ -185,29 +192,83 @@ class YP:
         
         if app_type == 'cloud_app' and task_type == 'day':
             if task_id == 106: # 上传文件
-                self.log('- 执行上传任务...')
                 self.upload_file()
             elif task_id == 107: # 创建笔记
                 self.log('- 执行笔记任务...')
                 self.refresh_notetoken()
                 self.create_note_flow()
 
+    # [修改] 使用新的秒传上传逻辑
     @catch_errors
     def upload_file(self):
-        url = 'http://ose.caiyun.feixin.10086.cn/richlifeApp/devapp/IUploadAndDownload'
-        headers = {
-            'APP_NUMBER': self.account,
-            'Authorization': self.Authorization,
-            'Host': 'ose.caiyun.feixin.10086.cn',
-            'Content-Type': 'application/xml; charset=UTF-8'
-        }
-        payload = f'''<pcUploadFileRequest><ownerMSISDN>{self.account}</ownerMSISDN><fileCount>1</fileCount><totalSize>1</totalSize><uploadContentList length="1"><uploadContentInfo><comlexFlag>0</comlexFlag><contentDesc><![CDATA[]]></contentDesc><contentName><![CDATA[autotask.txt]]></contentName><contentSize>1</contentSize><contentTAGList></contentTAGList><digest>C4CA4238A0B923820DCC509A6F75849B</digest><exif/><fileEtag>0</fileEtag><fileVersion>0</fileVersion><updateContentID></updateContentID></uploadContentInfo></uploadContentList><newCatalogName></newCatalogName><parentCatalogID></parentCatalogID><operation>0</operation><path></path><manualRename>2</manualRename><autoCreatePath length="0"/><tagID></tagID><tagType></tagType></pcUploadFileRequest>'''
+        if not self.yun_uni:
+            self.log("❌ 缺少 YUN_UNI 配置，跳过上传任务")
+            return
+
+        create_url = "https://personal-kd-njs.yun.139.com/hcy/file/create"
+        KNOWN_HASH = "6b86b273ff34fce19d6b804eff5a3f5747ada4eaa22f1d49c01e52ddb7875b4b"
+        KNOWN_SIZE = 1 
+
+        file_name = f"reward_task_{int(time.time())}_{random.randint(100,999)}.txt"
         
+        tz_cn = timezone(timedelta(hours=8))
+        now = datetime.now(tz_cn)
+        local_created_at = now.strftime('%Y-%m-%dT%H:%M:%S.') + now.strftime('%f')[:3] + "+08:00"
+
+        headers = {
+            "host": "personal-kd-njs.yun.139.com",
+            "x-yun-url-type": "1",
+            "x-yun-op-type": "1",
+            "x-yun-sub-op-type": "100",
+            "x-yun-api-version": "v1",
+            "x-yun-client-info": "4|127.0.0.1|1|12.4.3|OPPO|PDRM00|DF1290E08406BF121D2685BE1C3A50EA|02-00-00-00-00-00|android 13|1080X2245|zh||||013|0|",
+            "x-yun-app-channel": "10000023",
+            "x-huawei-channelsrc": "10000023",
+            "accept-language": "zh-CN",
+            "x-yun-uni": self.yun_uni, # 使用类变量
+            "authorization": self.Authorization, # 使用类变量
+            "content-type": "application/json; charset=UTF-8",
+            "user-agent": "okhttp/4.12.0"
+        }
+
+        payload = {
+            "contentHash": KNOWN_HASH,
+            "contentHashAlgorithm": "SHA256",
+            "contentType": "application/oct-stream",
+            "fileRenameMode": "force_rename",
+            "localCreatedAt": local_created_at,
+            "name": file_name,
+            "parallelUpload": True,
+            "parentFileId": "/", 
+            "partInfos": [{
+                "partNumber": 1,
+                "partSize": KNOWN_SIZE,
+                "start": 0,
+                "end": KNOWN_SIZE, 
+                "parallelHashCtx": {"partOffset": 0}
+            }],
+            "size": KNOWN_SIZE,
+            "storyVideoFile": False,
+            "type": "file",
+            "userRegion": {"cityCode": "376", "provinceCode": "371"}
+        }
+
+        self.log(f'- 尝试秒传文件: {file_name}')
         try:
-            requests.post(url, headers=headers, data=payload, timeout=5)
-            self.log('  └ 上传成功')
-        except:
-            self.log('  └ 上传失败')
+            # 独立请求，不使用 session 以保持 headers 纯净
+            resp = requests.post(create_url, headers=headers, json=payload, timeout=10)
+            res_json = resp.json()
+            
+            if res_json.get("success"):
+                data = res_json.get("data", {})
+                if data.get("rapidUpload"):
+                    self.log(f"  ✅ [秒传成功] ID: {data.get('fileId')}")
+                else:
+                    self.log("  ⚠️ [秒传未触发] 需实体上传")
+            else:
+                self.log(f"  ❌ [上传失败] {res_json.get('message')}")
+        except Exception as e:
+            self.log(f"  ❌ [异常] {e}")
 
     def refresh_notetoken(self):
         note_url = 'http://mnote.caiyun.feixin.10086.cn/noteServer/api/authTokenRefresh.do'
@@ -270,13 +331,12 @@ class YP:
 
     @catch_errors
     def surplus_num(self):
-        # 抽奖逻辑
         info_url = 'https://caiyun.feixin.10086.cn/market/playoffic/drawInfo'
         draw_url = "https://caiyun.feixin.10086.cn/market/playoffic/draw"
         res = self.send_request(info_url, headers=self.jwtHeaders).json()
         if res.get('msg') == 'success':
             remain = res['result'].get('surplusNumber', 0)
-            if remain > 50 - self.draw: # 这里的逻辑保留原作者意思
+            if remain > 50 - self.draw:
                 self.log(f"🎁 剩余抽奖: {remain}次, 开始抽奖...")
                 for _ in range(self.draw):
                     d_res = self.send_request(draw_url, headers=self.jwtHeaders).json()
@@ -286,7 +346,6 @@ class YP:
 
     @catch_errors
     def backup_cloud(self):
-        # 备份奖励
         url = 'https://caiyun.feixin.10086.cn/market/backupgift/info'
         res = self.send_request(url, headers=self.jwtHeaders).json()
         state = res.get('result', {}).get('state', -1)
@@ -309,7 +368,6 @@ class YP:
 
     @catch_errors
     def open_send(self):
-        # 通知开启奖励
         url = 'https://caiyun.feixin.10086.cn/market/msgPushOn/task/status'
         res = self.send_request(url, headers=self.jwtHeaders).json()
         result = res.get('result', {})
@@ -324,18 +382,15 @@ class YP:
 
     @catch_errors
     def receive(self):
-        # 领取云朵
         rec_url = "https://caiyun.feixin.10086.cn/market/signin/page/receive"
         res = self.send_request(rec_url, headers=self.jwtHeaders, cookies=self.cookies).json()
         
-        # 查询总数
         prize_url = f"https://caiyun.feixin.10086.cn/market/prizeApi/checkPrize/getUserPrizeLogPage?currPage=1&pageSize=15&_={self.timestamp}"
         p_res = self.send_request(prize_url, headers=self.jwtHeaders, cookies=self.cookies).json()
         
         recv = res["result"].get("receive", 0)
         total = res["result"].get("total", 0)
         
-        # 检查未领取的奖品
         pending = ""
         try:
             for item in p_res.get('result', {}).get('result', []):
@@ -354,24 +409,15 @@ class YP:
         self.log(f"========== 用户 [{self.encrypt_account}] ==========")
         
         if self.jwt():
-            # 1. 签到
             self.signin_status()
-            # 2. 戳一戳
             self.click()
-            # 3. 公众号签到
             self.wxsign()
-            # 4. 做云盘任务
             self.get_tasklist(url_name='sign_in_3', app_type='cloud_app')
-            # 5. 摇一摇
             self.shake()
-            # 6. 抽奖
             self.surplus_num()
-            # 7. 备份/通知奖励
             self.backup_cloud()
             self.open_send()
-            # 8. 做邮箱任务
             self.get_tasklist(url_name='newsign_139mail', app_type='email_app')
-            # 9. 统一领取云朵
             self.receive()
         else:
             self.log("❌ 登录失败 (SSO/JWT错误)")
