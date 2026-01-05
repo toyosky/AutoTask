@@ -546,7 +546,7 @@ class YP:
         return self.log_str
 
 # 模块导出函数
-def run_ydyp(view_only=True):
+def run_ydyp(view_only=False):
     """
     view_only=True: 仅查看任务状态
     view_only=False: 执行任务（默认）
