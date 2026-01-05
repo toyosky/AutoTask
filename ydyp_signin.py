@@ -10,8 +10,7 @@ from datetime import datetime, timezone, timedelta
 ydypCK = os.getenv("YDYP_CK") 
 # ===========================================
 
-ua = 'Mozilla/5.0 (Linux; Android 11; M2012K10C Build/RP1A.200720.011; wv) AppleWebKit/537.36 (KHTML, like Gecko) Version/4.0 Chrome/90.0.4430.210 Mobile Safari/537.36 MCloudApp/10.0.1'
-
+ua = 'Mozilla/5.0 (Linux; Android 13; PDRM00 Build/TP1A.220905.001; wv) AppleWebKit/537.36 (KHTML, like Gecko) Version/4.0 Chrome/108.0.5359.128 Mobile Safari/537.36 MCloudApp/12.4.3'
 class YP:
     def __init__(self, cookie):
         self.log_str = ""
