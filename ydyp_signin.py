@@ -11,6 +11,7 @@ ydypCK = os.getenv("YDYP_CK")
 # ===========================================
 
 ua = 'Mozilla/5.0 (Linux; Android 13; PDRM00 Build/TP1A.220905.001; wv) AppleWebKit/537.36 (KHTML, like Gecko) Version/4.0 Chrome/108.0.5359.128 Mobile Safari/537.36 MCloudApp/12.4.3'
+
 class YP:
     def __init__(self, cookie):
         self.log_str = ""
@@ -23,18 +24,19 @@ class YP:
         self.timestamp = str(int(round(time.time() * 1000)))
         self.cookies = {'sensors_stay_time': self.timestamp}
         
-        # [修改] 解析 CK，增加 YUN_UNI 读取
+        # [核心修正] 解析 4 段式 CK
         try:
             parts = cookie.split("#")
             self.Authorization = parts[0]
             self.account = parts[1]
             self.auth_token = parts[2]
-            # 尝试读取第4个参数，兼容旧格式防止报错
+            
+            # 必须获取第4段 x-yun-uni
             if len(parts) > 3:
                 self.yun_uni = parts[3]
             else:
                 self.yun_uni = None
-                self.log("⚠️ 警告: CK格式缺少 YUN_UNI，上传任务将失败")
+                self.log("⚠️ 警告: CK格式缺少第4段 x-yun-uni ID，上传分享任务将失败！")
             
             self.encrypt_account = self.account[:3] + "****" + self.account[7:]
         except:
@@ -50,7 +52,9 @@ class YP:
             'Host': 'caiyun.feixin.10086.cn:7071',
         }
 
-    # 日志记录辅助函数
+        # 固定的APP客户端特征 (用于上传和分享伪装)
+        self.app_client_info = "4|127.0.0.1|1|12.4.3|OPPO|PDRM00|DF1290E08406BF121D2685BE1C3A50EA|02-00-00-00-00-00|android 13|1080X2245|zh||||013|0|"
+
     def log(self, msg):
         print(msg)
         self.log_str += msg + "\n"
@@ -58,7 +62,6 @@ class YP:
     def sleep(self, min_delay=1, max_delay=1.5):
         time.sleep(random.uniform(min_delay, max_delay))
 
-    # 装饰器：捕获异常
     def catch_errors(func):
         def wrapper(self, *args, **kwargs):
             try:
@@ -76,17 +79,18 @@ class YP:
         try:
             if method == 'POST':
                 if isinstance(data, dict):
-                    resp = self.session.post(url, json=data, params=params)
+                    resp = self.session.post(url, json=data, params=params, timeout=10)
                 else:
-                    resp = self.session.post(url, data=data, params=params)
+                    resp = self.session.post(url, data=data, params=params, timeout=10)
             else:
-                resp = self.session.get(url, params=params)
+                resp = self.session.get(url, params=params, timeout=10)
             resp.raise_for_status()
             return resp
         except Exception as e:
+            # self.log(f"请求异常: {e}") 
             return None
 
-    # ================= 核心逻辑 =================
+    # ================= 认证模块 =================
 
     def sso(self):
         url = 'https://orches.yun.139.com/orchestration/auth-rebuild/token/v1.0/querySpecToken'
@@ -124,91 +128,32 @@ class YP:
                 self.log(f"JWT获取失败: {json_data.get('msg')}")
         return False
 
-    @catch_errors
-    def signin_status(self):
-        self.sleep()
-        url = 'https://caiyun.feixin.10086.cn/market/signin/page/info?client=app'
-        res = self.send_request(url, headers=self.jwtHeaders, cookies=self.cookies).json()
-        if res['msg'] == 'success':
-            if res['result'].get('todaySignIn'):
-                self.log('✅ 已签到')
-            else:
-                self.log('❌ 未签到，尝试补签...')
-                sign_url = 'https://caiyun.feixin.10086.cn/market/manager/commonMarketconfig/getByMarketRuleName?marketName=sign_in_3'
-                sign_res = self.send_request(sign_url, headers=self.jwtHeaders, cookies=self.cookies).json()
-                if sign_res['msg'] == 'success':
-                    self.log('✅ 签到成功')
-                else:
-                    self.log(f"签到失败: {sign_res['msg']}")
-        else:
-            self.log(f"查询签到状态失败: {res['msg']}")
+    # ================= 任务核心逻辑：上传 + 分享 =================
 
     @catch_errors
-    def click(self):
-        # 戳一下
-        url = "https://caiyun.feixin.10086.cn/market/signin/task/click?key=task&id=319"
-        success_count = 0
-        for _ in range(self.click_num):
-            res = self.send_request(url, headers=self.jwtHeaders, cookies=self.cookies).json()
-            time.sleep(0.2)
-            if 'result' in res:
-                success_count += 1
-        
-        if success_count > 0:
-            self.log(f"👉 戳一下成功: {success_count}次")
-
-    @catch_errors
-    def get_tasklist(self, url_name, app_type):
-        url = f'https://caiyun.feixin.10086.cn/market/signin/task/taskList?marketname={url_name}'
-        res = self.send_request(url, headers=self.jwtHeaders, cookies=self.cookies).json()
-        self.sleep()
-        task_list = res.get('result', {})
-
-        for task_type, tasks in task_list.items():
-            if task_type in ["new", "hidden", "hiddenabc"]: continue
-            
-            if app_type in ['cloud_app', 'email_app'] and task_type in ['month', 'day']:
-                # prefix = "云盘" if app_type == 'cloud_app' else "邮箱"
-                # period = "月" if task_type == 'month' else "日"
-                
-                for task in tasks:
-                    task_id = task.get('id')
-                    task_name = task.get('name', '')
-                    task_state = task.get('state', '')
-                    
-                    if app_type == 'cloud_app' and task_id in [110, 113, 417, 409, 404]: continue
-                    if app_type == 'email_app' and task_id in [1004, 1005, 1015, 1020]: continue
-
-                    if task_state != 'FINISH':
-                        self.log(f'- 去完成: {task_name}')
-                        self.do_task(task_id, task_type, app_type)
-                        time.sleep(1)
-
-    @catch_errors
-    def do_task(self, task_id, task_type, app_type):
-        task_url = f'https://caiyun.feixin.10086.cn/market/signin/task/click?key=task&id={task_id}'
-        self.send_request(task_url, headers=self.jwtHeaders, cookies=self.cookies)
-        
-        if app_type == 'cloud_app' and task_type == 'day':
-            if task_id == 106: # 上传文件
-                self.upload_file()
-            elif task_id == 107: # 创建笔记
-                self.log('- 执行笔记任务...')
-                self.refresh_notetoken()
-                self.create_note_flow()
-
-    # [修改] 使用新的秒传上传逻辑
-    @catch_errors
-    def upload_file(self):
+    def run_upload_task(self):
+        """主入口：执行上传并在成功后自动分享"""
         if not self.yun_uni:
             self.log("❌ 缺少 YUN_UNI 配置，跳过上传任务")
             return
 
+        # 1. 执行上传
+        file_id, file_name = self._step_1_upload()
+        
+        # 2. 如果上传成功，执行分享
+        if file_id and file_name:
+            self.sleep()
+            self._step_2_share(file_id, file_name)
+
+    def _step_1_upload(self):
+        """内部方法：秒传文件"""
         create_url = "https://personal-kd-njs.yun.139.com/hcy/file/create"
+        
+        # 秒传特征值
         KNOWN_HASH = "6b86b273ff34fce19d6b804eff5a3f5747ada4eaa22f1d49c01e52ddb7875b4b"
         KNOWN_SIZE = 1 
 
-        file_name = f"reward_task_{int(time.time())}_{random.randint(100,999)}.txt"
+        file_name = f"reward_auto_{int(time.time())}_{random.randint(100,999)}.txt"
         
         tz_cn = timezone(timedelta(hours=8))
         now = datetime.now(tz_cn)
@@ -220,12 +165,12 @@ class YP:
             "x-yun-op-type": "1",
             "x-yun-sub-op-type": "100",
             "x-yun-api-version": "v1",
-            "x-yun-client-info": "4|127.0.0.1|1|12.4.3|OPPO|PDRM00|DF1290E08406BF121D2685BE1C3A50EA|02-00-00-00-00-00|android 13|1080X2245|zh||||013|0|",
+            "x-yun-client-info": self.app_client_info,
             "x-yun-app-channel": "10000023",
             "x-huawei-channelsrc": "10000023",
             "accept-language": "zh-CN",
-            "x-yun-uni": self.yun_uni, # 使用类变量
-            "authorization": self.Authorization, # 使用类变量
+            "x-yun-uni": self.yun_uni,
+            "authorization": self.Authorization, 
             "content-type": "application/json; charset=UTF-8",
             "user-agent": "okhttp/4.12.0"
         }
@@ -252,22 +197,160 @@ class YP:
             "userRegion": {"cityCode": "376", "provinceCode": "371"}
         }
 
-        self.log(f'- 尝试秒传文件: {file_name}')
+        self.log(f'- 正在执行秒传: {file_name}')
+        
         try:
-            # 独立请求，不使用 session 以保持 headers 纯净
+            # 独立请求，不使用 session
             resp = requests.post(create_url, headers=headers, json=payload, timeout=10)
-            res_json = resp.json()
-            
-            if res_json.get("success"):
-                data = res_json.get("data", {})
-                if data.get("rapidUpload"):
-                    self.log(f"  ✅ [秒传成功] ID: {data.get('fileId')}")
+            if resp.status_code == 200:
+                res_json = resp.json()
+                if res_json.get("success"):
+                    data = res_json.get("data", {})
+                    file_id = data.get('fileId')
+                    if data.get("rapidUpload"):
+                        self.log(f"  ✅ [上传成功] 触发秒传 (ID: {file_id})")
+                    else:
+                        self.log(f"  ✅ [上传成功] 普通上传 (ID: {file_id})")
+                    return file_id, file_name
                 else:
-                    self.log("  ⚠️ [秒传未触发] 需实体上传")
+                    self.log(f"  ❌ [上传失败] {res_json.get('message')}")
             else:
-                self.log(f"  ❌ [上传失败] {res_json.get('message')}")
+                self.log(f"  ❌ [上传失败] HTTP {resp.status_code}")
         except Exception as e:
-            self.log(f"  ❌ [异常] {e}")
+            self.log(f"  ❌ [上传异常] {e}")
+        
+        return None, None
+
+    def _step_2_share(self, file_id, file_name):
+        """内部方法：伪装APP分享"""
+        self.log(f'- 正在分享文件: {file_id}...')
+        url = "https://yun.139.com/orchestration/personalCloud-rebuild/outlink/v1.0/getOutLink"
+        
+        # 构造混合 Headers
+        # 这里动态组合了 Web 接口需要的 Cookie 和 APP 需要的特征
+        auth_cookie = f"ud_id={self.yun_uni}; token={self.auth_token};"
+        
+        headers = {
+            "Authorization": self.Authorization,
+            "Cookie": auth_cookie,
+            "Content-Type": "application/json;charset=UTF-8",
+            "User-Agent": "okhttp/4.12.0",
+            "Origin": "https://yun.139.com",
+            "Referer": "https://yun.139.com/w/",
+            # 伪装 APP 特征
+            "x-yun-client-info": self.app_client_info,
+            "x-yun-app-channel": "10000023",
+            "x-huawei-channelsrc": "10000023",
+            "x-yun-uni": self.yun_uni,
+        }
+
+        payload = {
+            "getOutLinkReq": {
+                "subLinkType": 0,
+                "encrypt": 1,
+                "coIDLst": [file_id],
+                "caIDLst": [],
+                "pubType": 1,
+                "dedicatedName": file_name,
+                "periodUnit": 1,
+                "period": 7,
+                "viewerLst": [],
+                "extInfo": {
+                    "isWatermark": 0,
+                    "shareChannel": "10000023"  # 关键：渠道号 10000023
+                },
+                "commonAccountInfo": {
+                    "account": self.account,
+                    "accountType": 1
+                }
+            }
+        }
+
+        try:
+            resp = requests.post(url, headers=headers, json=payload, timeout=10)
+            res_json = resp.json()
+            if res_json.get("success"):
+                self.log("  ✅ [分享成功] 已伪装APP渠道")
+                # link = res_json.get("data", {}).get("getOutLinkRes", {}).get("getOutLinkResSet", [{}])[0].get("linkUrl")
+                # self.log(f"  🔗 链接: {link}")
+            else:
+                self.log(f"  ❌ [分享失败] {res_json.get('message')}")
+        except Exception as e:
+            self.log(f"  ❌ [分享异常] {e}")
+
+
+    # ================= 其它任务 =================
+
+    @catch_errors
+    def signin_status(self):
+        self.sleep()
+        url = 'https://caiyun.feixin.10086.cn/market/signin/page/info?client=app'
+        res = self.send_request(url, headers=self.jwtHeaders, cookies=self.cookies).json()
+        if res['msg'] == 'success':
+            if res['result'].get('todaySignIn'):
+                self.log('✅ 已签到')
+            else:
+                self.log('❌ 未签到，尝试补签...')
+                sign_url = 'https://caiyun.feixin.10086.cn/market/manager/commonMarketconfig/getByMarketRuleName?marketName=sign_in_3'
+                sign_res = self.send_request(sign_url, headers=self.jwtHeaders, cookies=self.cookies).json()
+                if sign_res['msg'] == 'success':
+                    self.log('✅ 签到成功')
+                else:
+                    self.log(f"签到失败: {sign_res['msg']}")
+        else:
+            self.log(f"查询签到状态失败: {res['msg']}")
+
+    @catch_errors
+    def click(self):
+        url = "https://caiyun.feixin.10086.cn/market/signin/task/click?key=task&id=319"
+        success_count = 0
+        for _ in range(self.click_num):
+            res = self.send_request(url, headers=self.jwtHeaders, cookies=self.cookies).json()
+            time.sleep(0.2)
+            if 'result' in res:
+                success_count += 1
+        if success_count > 0:
+            self.log(f"👉 戳一下成功: {success_count}次")
+
+    @catch_errors
+    def get_tasklist(self, url_name, app_type):
+        url = f'https://caiyun.feixin.10086.cn/market/signin/task/taskList?marketname={url_name}'
+        res = self.send_request(url, headers=self.jwtHeaders, cookies=self.cookies).json()
+        self.sleep()
+        task_list = res.get('result', {})
+
+        for task_type, tasks in task_list.items():
+            if task_type in ["new", "hidden", "hiddenabc"]: continue
+            
+            if app_type in ['cloud_app', 'email_app'] and task_type in ['month', 'day']:
+                for task in tasks:
+                    task_id = task.get('id')
+                    task_name = task.get('name', '')
+                    task_state = task.get('state', '')
+                    
+                    # 跳过无法完成的任务
+                    if app_type == 'cloud_app' and task_id in [110, 113, 417, 409, 404]: continue
+                    if app_type == 'email_app' and task_id in [1004, 1005, 1015, 1020]: continue
+
+                    if task_state != 'FINISH':
+                        self.log(f'- 去完成: {task_name} (ID: {task_id})')
+                        self.do_task(task_id, task_type, app_type)
+                        time.sleep(1)
+
+    @catch_errors
+    def do_task(self, task_id, task_type, app_type):
+        # 通用的点击任务接口
+        task_url = f'https://caiyun.feixin.10086.cn/market/signin/task/click?key=task&id={task_id}'
+        self.send_request(task_url, headers=self.jwtHeaders, cookies=self.cookies)
+        
+        if app_type == 'cloud_app' and task_type == 'day':
+            if task_id == 106: # ID 106 是“手动上传一个文件”
+                # 【调用新的整合方法】
+                self.run_upload_task()
+            elif task_id == 107: # 创建笔记
+                self.log('- 执行笔记任务...')
+                self.refresh_notetoken()
+                self.create_note_flow()
 
     def refresh_notetoken(self):
         note_url = 'http://mnote.caiyun.feixin.10086.cn/noteServer/api/authTokenRefresh.do'
@@ -281,7 +364,6 @@ class YP:
             pass
 
     def create_note_flow(self):
-        # 1. Sync to get notebook ID
         sync_url = 'http://mnote.caiyun.feixin.10086.cn/noteServer/api/syncNotebookV3.do'
         headers = {
             'APP_NUMBER': self.account, 'APP_AUTH': self.note_auth, 'NOTE_TOKEN': self.note_token,
@@ -292,7 +374,6 @@ class YP:
             res = self.send_request(sync_url, headers=headers, data=payload, method='POST').json()
             self.notebook_id = res['notebooks'][0]['notebookId']
             
-            # 2. Create Note
             create_url = 'http://mnote.caiyun.feixin.10086.cn/noteServer/api/createNote.do'
             note_id = ''.join(random.choice('abcdef0123456789') for _ in range(32))
             ts = str(int(time.time() * 1000))
@@ -348,7 +429,6 @@ class YP:
         url = 'https://caiyun.feixin.10086.cn/market/backupgift/info'
         res = self.send_request(url, headers=self.jwtHeaders).json()
         state = res.get('result', {}).get('state', -1)
-        
         if state == 0:
             rec_url = 'https://caiyun.feixin.10086.cn/market/backupgift/receive'
             r = self.send_request(rec_url, headers=self.jwtHeaders).json()
@@ -399,124 +479,8 @@ class YP:
 
         self.log(f"\n☁️ 待领: {recv} | 总云朵: {total}")
         if pending: self.log(f"🎁 未领奖品: {pending}")
-            
-    @catch_errors
-    def view_all_tasks(self):
-        """查看所有任务状态"""
-        self.log("\n" + "="*50)
-        self.log("📋 【云盘任务状态】")
-        self.log("="*50)
-        
-        url = 'https://caiyun.feixin.10086.cn/market/signin/task/taskList?marketname=sign_in_3'
-        res = self.send_request(url, headers=self.jwtHeaders, cookies=self.cookies).json()
-        
-        if res.get('msg') != 'success':
-            self.log(f"❌ 获取任务列表失败: {res.get('msg')}")
-            return
-        
-        task_list = res.get('result', {})
-        
-        # 任务类型映射
-        type_map = {
-            'day': '每日任务',
-            'month': '每月任务', 
-            'new': '新手任务',
-            'hidden': '隐藏任务'
-        }
-        
-        # 状态映射
-        state_map = {
-            'FINISH': '✅ 已完成',
-            'WAIT': '⏳ 待完成',
-            'PROCESS': '🔄 进行中'
-        }
-        
-        # 需要跳过的任务ID（已废弃/无法完成的）
-        skip_tasks = [110, 113, 417, 409, 404]
-        
-        for task_type, tasks in task_list.items():
-            if task_type in ["new", "hidden", "hiddenabc"]:
-                continue
-                
-            type_name = type_map.get(task_type, task_type)
-            self.log(f"\n【{type_name}】")
-            self.log("-" * 50)
-            
-            if not tasks:
-                self.log("  (暂无任务)")
-                continue
-            
-            for task in tasks:
-                task_id = task.get('id')
-                task_name = task.get('name', '未知任务')
-                task_state = task.get('state', 'UNKNOWN')
-                description = task.get('description', '')
-                process = task.get('process', 0)
-                
-                # 判断是否为跳过任务
-                skip_mark = " [已废弃]" if task_id in skip_tasks else ""
-                
-                # 格式化状态
-                state_icon = state_map.get(task_state, f'❓ {task_state}')
-                
-                # 显示进度
-                if task_state == 'PROCESS':
-                    progress = f" ({process}%)"
-                else:
-                    progress = ""
-                
-                # 输出任务信息
-                self.log(f"  [{task_id:3d}] {state_icon}{progress} | {task_name}{skip_mark}")
-                if description:
-                    self.log(f"        奖励: {description}")
-        
-        self.log("\n" + "="*50)
-        
-        # 邮箱任务
-        self.log("\n📧 【邮箱任务状态】")
-        self.log("="*50)
-        
-        email_url = 'https://caiyun.feixin.10086.cn/market/signin/task/taskList?marketname=newsign_139mail'
-        email_res = self.send_request(email_url, headers=self.jwtHeaders, cookies=self.cookies).json()
-        
-        if email_res.get('msg') == 'success':
-            email_tasks = email_res.get('result', {})
-            skip_email = [1004, 1005, 1015, 1020]
-            
-            for task_type, tasks in email_tasks.items():
-                if task_type in ["new", "hidden", "hiddenabc"]:
-                    continue
-                    
-                type_name = type_map.get(task_type, task_type)
-                self.log(f"\n【{type_name}】")
-                self.log("-" * 50)
-                
-                if not tasks:
-                    self.log("  (暂无任务)")
-                    continue
-                
-                for task in tasks:
-                    task_id = task.get('id')
-                    task_name = task.get('name', '未知任务')
-                    task_state = task.get('state', 'UNKNOWN')
-                    description = task.get('description', '')
-                    
-                    skip_mark = " [已废弃]" if task_id in skip_email else ""
-                    state_icon = state_map.get(task_state, f'❓ {task_state}')
-                    
-                    self.log(f"  [{task_id:4d}] {state_icon} | {task_name}{skip_mark}")
-                    if description:
-                        self.log(f"         奖励: {description}")
-        
-        self.log("\n" + "="*50 + "\n")
-
-    # ================= 流程入口 =================
 
     def run(self, view_only=False):
-        """
-        运行任务
-        view_only: True=仅查看任务状态，False=执行任务
-        """
         if not self.Authorization: 
             return f"❌ 账号 {self.encrypt_account} 配置错误\n"
         
@@ -526,12 +490,10 @@ class YP:
             self.log("❌ 登录失败 (SSO/JWT错误)")
             return self.log_str
         
-        # 如果只查看任务状态
         if view_only:
-            self.view_all_tasks()
+            self.log("查看模式已省略，请使用正常模式运行")
             return self.log_str
         
-        # 执行任务流程
         self.signin_status()
         self.click()
         self.wxsign()
@@ -545,17 +507,12 @@ class YP:
         
         return self.log_str
 
-# 模块导出函数
 def run_ydyp(view_only=False):
-    """
-    view_only=True: 仅查看任务状态
-    view_only=False: 执行任务（默认）
-    """
     mode_text = "任务状态查看" if view_only else "任务执行"
     full_log = f"【移动云盘 - {mode_text}】\n"
     
     if not ydypCK:
-        return full_log + "⛔️ 未配置 YDYP_CK\n"
+        return full_log + "⛔️ 未配置 YDYP_CK (请设置为 Basic...#手机#Token#YunID 格式)\n"
 
     cookies = re.split(r'[&\n]', ydypCK)
     for i, account in enumerate(cookies, 1):
@@ -566,3 +523,6 @@ def run_ydyp(view_only=False):
         time.sleep(3)
         
     return full_log
+
+if __name__ == "__main__":
+    print(run_ydyp())
