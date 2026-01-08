@@ -10,21 +10,19 @@ import random
 from datetime import datetime, timezone, timedelta
 
 # ================= 配置区域 =================
-# 格式要求：BasicAuth#手机号#Token#x-yun-uni
-# 多个账号用 & 符号连接，或换行
-
-# 环境变量覆盖 (兼容青龙/本地环境变量)
 if os.getenv("YDYP_CK"):
     ydypCK = os.getenv("YDYP_CK")
 
 # --- 游戏配置 ---
-# 既然互助成功会有5次机会，这里设置稍微大一点(比如8次)
-# 脚本内部会根据服务器返回的剩余次数(curr)自动提前停止，不用担心多跑
-GAME_TARGET_SUCC = 8   
-GAME_DURATION = random.randint(420,650)    # 每局模拟耗时(秒)，建议300以上，太快容易被风控
-GAME_SALT = "seedMdYYLIZfbCxg" # 游戏加密盐值
+# 2. 游戏配置
+GAME_ENABLED = True      # 是否开启游戏
+TARGET_SUCC = 5          # 每天赢多少次停止
+PLAY_DURATION = 300      # 每局耗时(秒)，建议 300 以防封号
+INVITE_ENABLED = True    # 是否开启互助
+
 # ===========================================
 
+GAME_SALT = "seedMdYYLIZfbCxg"
 ua = 'Mozilla/5.0 (Linux; Android 13; PDRM00 Build/TP1A.220905.001; wv) AppleWebKit/537.36 (KHTML, like Gecko) Version/4.0 Chrome/108.0.5359.128 Mobile Safari/537.36 MCloudApp/12.4.3'
 
 class YP:
@@ -33,38 +31,37 @@ class YP:
         self.notebook_id = None
         self.note_token = None
         self.note_auth = None
-        self.click_num = 15  # 抽奖/摇一摇次数
-        self.draw = 1  # 剩余抽奖次数阈值
+        self.click_num = 15
+        self.draw = 1
         self.session = requests.Session()
         self.timestamp = str(int(round(time.time() * 1000)))
         self.cookies = {'sensors_stay_time': self.timestamp}
         
-        # 解析 CK
+        # 解析 Cookie
         try:
             parts = cookie.split("#")
             self.Authorization = parts[0]
             self.account = parts[1]
             self.auth_token = parts[2]
-            
-            if len(parts) > 3:
-                self.yun_uni = parts[3]
-            else:
-                self.yun_uni = None
-                self.log("⚠️ 警告: CK缺少 x-yun-uni，上传分享任务将失败！")
-            
+            self.yun_uni = parts[3] if len(parts) > 3 else None
             self.encrypt_account = self.account[:3] + "****" + self.account[7:]
+            self.valid = True
         except:
             self.Authorization = None
             self.account = "Unknown"
             self.auth_token = ""
             self.yun_uni = None
             self.encrypt_account = "格式错误"
-
+            self.valid = False
+        
+        # 基础请求头
         self.jwtHeaders = {
             'User-Agent': ua,
             'Accept': '*/*',
             'Host': 'caiyun.feixin.10086.cn:7071',
         }
+        
+        # 伪装设备信息
         self.app_client_info = "4|127.0.0.1|1|12.4.3|OPPO|PDRM00|DF1290E08406BF121D2685BE1C3A50EA|02-00-00-00-00-00|android 13|1080X2245|zh||||013|0|"
 
     def log(self, msg):
@@ -80,28 +77,33 @@ class YP:
                 return func(self, *args, **kwargs)
             except Exception as e:
                 self.log(f"❌ 错误: {str(e)}")
-            return None
+                return None
         return wrapper
 
     def send_request(self, url, headers=None, cookies=None, data=None, params=None, method='GET'):
+        # 自动添加 headers
         req_headers = self.session.headers.copy()
-        if headers: req_headers.update(headers)
-        if cookies: self.session.cookies.update(cookies)
+        if headers:
+            req_headers.update(headers)
         
+        if cookies:
+            self.session.cookies.update(cookies)
+            
         try:
             if method == 'POST':
                 if isinstance(data, dict):
-                    resp = self.session.post(url, headers=req_headers, json=data, params=params, timeout=10)
+                    resp = self.session.post(url, headers=req_headers, json=data, params=params, timeout=15)
                 else:
-                    resp = self.session.post(url, headers=req_headers, data=data, params=params, timeout=10)
+                    resp = self.session.post(url, headers=req_headers, data=data, params=params, timeout=15)
             else:
-                resp = self.session.get(url, headers=req_headers, params=params, timeout=10)
+                resp = self.session.get(url, headers=req_headers, params=params, timeout=15)
+            # 不强制 raise_for_status，由业务逻辑判断
             return resp
         except Exception as e:
+            # self.log(f"请求异常: {e}")
             return None
 
     # ================= 认证模块 =================
-
     def sso(self):
         url = 'https://orches.yun.139.com/orchestration/auth-rebuild/token/v1.0/querySpecToken'
         headers = {
@@ -113,11 +115,14 @@ class YP:
         data = {"account": self.account, "toSourceId": "001005"}
         res = self.send_request(url, headers=headers, data=data, method='POST')
         if res:
-            json_data = res.json()
-            if json_data.get('success'):
-                return json_data['data']['token']
-            else:
-                self.log(f"SSO失败: {json_data.get('message')}")
+            try:
+                json_data = res.json()
+                if json_data.get('success'):
+                    return json_data['data']['token']
+                else:
+                    self.log(f"SSO失败: {json_data.get('message')}")
+            except:
+                self.log("SSO响应解析失败")
         return None
 
     def jwt(self):
@@ -129,183 +134,241 @@ class YP:
         url = f"https://caiyun.feixin.10086.cn:7071/portal/auth/tyrzLogin.action?ssoToken={token}"
         res = self.send_request(url, headers=self.jwtHeaders, method='POST')
         if res:
-            json_data = res.json()
-            if json_data.get('code') == 0:
-                self.jwtHeaders['jwtToken'] = json_data['result']['token']
-                self.cookies['jwtToken'] = json_data['result']['token']
-                return True
-            else:
-                self.log(f"JWT获取失败: {json_data.get('msg')}")
+            try:
+                json_data = res.json()
+                if json_data.get('code') == 0:
+                    self.jwtHeaders['jwtToken'] = json_data['result']['token']
+                    self.cookies['jwtToken'] = json_data['result']['token']
+                    return True
+                else:
+                    self.log(f"JWT获取失败: {json_data.get('msg')}")
+            except:
+                pass
         return False
 
-    # ================= 互助模块 (核心新增) =================
+    # ================= 🎮 游戏模块 (修正版) =================
     
     def _game_sign(self, req_id, ts, nonce):
-        return hashlib.md5(f"{GAME_SALT}{req_id}{ts}{nonce}{GAME_SALT}".encode('utf-8')).hexdigest()
+        raw = f"{GAME_SALT}{req_id}{ts}{nonce}{GAME_SALT}"
+        return hashlib.md5(raw.encode('utf-8')).hexdigest()
+
+    def _get_game_headers(self, req_id, ts, nonce):
+        """构造与独立脚本完全一致的Headers"""
+        sign = self._game_sign(req_id, ts, nonce)
+        return {
+            'User-Agent': ua,
+            'Accept': 'application/json, text/plain, */*',  # 关键修复
+            'x-requested-with': 'com.chinamobile.mcloud',
+            'Host': 'caiyun.feixin.10086.cn:7071',
+            'referer': 'https://caiyun.feixin.10086.cn:7071/portal/synthesisonet/index.html?sourceid=1120&enableShare=1', # 关键修复
+            'x-request-id': req_id,
+            'x-timestamp': ts,
+            'x-nonce': nonce,
+            'x-signature': sign,
+            'token': self.auth_token,
+            'jwtToken': self.jwtHeaders.get('jwtToken')
+        }
 
     @catch_errors
-    def run_invite(self, target_list):
-        """执行互助：遍历所有账号列表，给别人助力"""
-        if not target_list or len(target_list) <= 1:
-            return 
-
-        self.log("\n🤝 正在执行账号互助...")
-        url = "https://caiyun.feixin.10086.cn:7071/market/signin/hecheng1T/beinvite"
-
-        for target_phone in target_list:
-            # 1. 跳过自己
-            if target_phone == self.account:
-                continue
-            
-            # 2. 准备参数
-            ts = str(int(time.time() * 1000))
-            req_id = str(uuid.uuid4())
-            nonce = str(uuid.uuid4())
-            sign = self._game_sign(req_id, ts, nonce)
-
-            # 3. 构造专用 Header
-            headers = {
-                'x-request-id': req_id,
-                'x-timestamp': ts,
-                'x-nonce': nonce,
-                'x-signature': sign,
-                'token': self.auth_token,
-                'x-requested-with': 'com.chinamobile.mcloud',
-                'referer': f'https://caiyun.feixin.10086.cn:7071/portal/synthesisonet/index.html?inviter={target_phone}&sourceid=1120',
-                'User-Agent': ua
-            }
-            # 合并登录态
-            headers.update(self.jwtHeaders)
-
-            try:
-                params = {"inviter": target_phone}
-                res = self.session.get(url, headers=headers, params=params, cookies=self.cookies, timeout=5).json()
-                
-                if res.get('code') == 0:
-                    self.log(f"   ✅ 助力 -> {target_phone[-4:]}: 成功")
-                else:
-                    msg = res.get('msg', '未知错误')
-                    if "上限" in msg:
-                        self.log(f"   ⚠️ 助力 -> {target_phone[-4:]}: 对方已满或你已达上限")
-                    elif "自己" in msg:
-                        pass
-                    else:
-                        self.log(f"   ❌ 助力 -> {target_phone[-4:]}: {msg}")
-            except Exception as e:
-                self.log(f"   ❌ 助力 -> {target_phone[-4:]}: 请求异常")
-            
-            time.sleep(2) # 间隔防止风控
-
-    # ================= 游戏模块 =================
-
-    def _game_headers(self, req_id, ts, nonce):
-        sign = self._game_sign(req_id, ts, nonce)
-        h = {
-            'x-request-id': req_id, 'x-timestamp': ts, 'x-nonce': nonce, 'x-signature': sign, 
-            'token': self.auth_token, 'x-requested-with': 'com.chinamobile.mcloud',
-            'referer': 'https://caiyun.feixin.10086.cn:7071/portal/synthesisonet/index.html?sourceid=1120&enableShare=1'
-        }
-        return h
-
-    def _game_init(self):
+    def game_init(self):
+        """游戏初始化"""
         url = "https://caiyun.feixin.10086.cn:7071/market/signin/hecheng1T/beinvite"
         ts, req_id, nonce = str(int(time.time() * 1000)), str(uuid.uuid4()), str(uuid.uuid4())
-        headers = self._game_headers(req_id, ts, nonce)
+        headers = self._get_game_headers(req_id, ts, nonce)
         try:
-            self.send_request(url, headers=headers)
+            # 盲发请求，不检查返回值，只确保网络畅通
+            self.session.get(url, headers=headers, cookies=self.cookies, timeout=10)
             return True
-        except: return False
+        except:
+            return False
 
-    def _game_finish(self):
-        url = "https://caiyun.feixin.10086.cn:7071/market/signin/hecheng1T/finish?flag=true"
+    @catch_errors
+    def game_finish(self):
+        """游戏结算"""
+        url = "https://caiyun.feixin.10086.cn:7071/market/signin/hecheng1T/finish"
         ts, req_id, nonce = str(int(time.time() * 1000)), str(uuid.uuid4()), str(uuid.uuid4())
-        headers = self._game_headers(req_id, ts, nonce)
+        headers = self._get_game_headers(req_id, ts, nonce)
         try:
-            res = self.send_request(url, headers=headers, params={"flag": "true"})
+            res = self.session.get(url, headers=headers, params={"flag": "true"}, cookies=self.cookies, timeout=10)
             return res.json()
         except Exception as e:
+            self.log(f"❌ 结算请求异常: {e}")
             return None
 
     @catch_errors
-    def run_hecheng(self):
-        self.log("\n🎮 正在检测游戏任务...")
+    def run_game(self):
+        """运行游戏主循环"""
+        self.log("\n🎮 ===== 合成游戏 =====")
+        
+        target_succ = TARGET_SUCC
         succ_count = 0
         
-        # 只要没达到设定目标，且服务器没返回次数耗尽，就一直玩
-        while succ_count < GAME_TARGET_SUCC:
-            self.log(f"   [第 {succ_count + 1} 局] 准备开始...")
-            self._game_init()
-            self.log(f"   ⏳ 游戏进行中 (等待 {GAME_DURATION} 秒)...")
-            time.sleep(GAME_DURATION)
+        while succ_count < target_succ:
+            self.log(f"🎲 第 {succ_count + 1} / {target_succ} 局准备开始...")
             
-            res = self._game_finish()
+            # 1. 初始化
+            if not self.game_init():
+                self.log("❌ 游戏初始化请求失败")
+                break
+            
+            # 2. 模拟耗时
+            self.log(f"⏳ 游戏中... (等待 {PLAY_DURATION} 秒)")
+            time.sleep(PLAY_DURATION)
+            
+            # 3. 结算
+            res = self.game_finish()
+            
             if res and res.get('code') == 0:
                 result = res.get('result', {})
                 current_succ = result.get('succ', 0)
                 remaining = result.get('curr', 0) 
                 
                 if result.get('flag') == True or current_succ > 0:
-                      self.log(f"   🎉 胜利! 累计成功: {current_succ} | 剩余机会: {remaining}")
-                      succ_count += 1
-                      # 如果服务器明确返回剩余次数为0，直接跳出循环
-                      if remaining <= 0:
-                          self.log("   ⛔️ 游戏次数已耗尽 (Server Returns 0)，停止。")
-                          break
+                    self.log(f"🎉 胜利! 本月累计: {current_succ} 次 | 剩余机会: {remaining}")
+                    succ_count += 1
                 else:
-                      self.log(f"   ⚠️ 结算无效: {res}")
-                      if remaining <= 0:
-                          self.log("   ⛔️ 游戏次数已耗尽，停止。")
-                          break
-            else:
-                self.log(f"   ❌ 接口错误: {res}")
-                break
-            time.sleep(3)
+                    self.log(f"⚠️ 结算无效: {res}")
 
-    # ================= 日常任务逻辑 =================
+                if remaining <= 0:
+                    self.log("⛔️ 游戏次数已耗尽，停止运行。")
+                    break
+            else:
+                self.log(f"❌ 结算接口错误: {res}")
+                break
+            
+            time.sleep(2)
+        
+        self.log(f"📊 游戏结束，本次共完成 {succ_count} 次。")
+
+    @catch_errors
+    def do_invite(self, target_phone):
+        """执行助力邀请"""
+        url = "https://caiyun.feixin.10086.cn:7071/market/signin/hecheng1T/beinvite"
+        ts, req_id, nonce = str(int(time.time() * 1000)), str(uuid.uuid4()), str(uuid.uuid4())
+        headers = self._get_game_headers(req_id, ts, nonce)
+        # 覆盖 Referer 包含邀请人
+        headers['referer'] = f'https://caiyun.feixin.10086.cn:7071/portal/synthesisonet/index.html?inviter={target_phone}&sourceid=1120'
+        
+        params = {"inviter": target_phone}
+        
+        try:
+            resp = self.session.get(url, headers=headers, params=params, cookies=self.cookies, timeout=10)
+            if resp.status_code == 200:
+                try:
+                    data = resp.json()
+                    if data.get('code') == 0:
+                        self.log(f" ✅ 助力成功 -> {target_phone[:3]}****{target_phone[7:]}")
+                        return True
+                    else:
+                        msg = data.get('msg', '未知错误')
+                        if '已经助力' in msg or '已助力' in msg:
+                            self.log(f" ℹ️ 今日已助力过")
+                        else:
+                            self.log(f" ⚠️ 助力失败: {msg}")
+                        return False
+                except:
+                    return False
+        except Exception as e:
+            self.log(f" ❌ 助力异常: {e}")
+            return False
+
+    # ================= 📋 日常任务模块 =================
 
     @catch_errors
     def run_upload_task(self):
-        if not self.yun_uni: return
+        """任务：上传并分享文件"""
+        if not self.yun_uni:
+            self.log("❌ 缺少 YUN_UNI 配置，跳过上传任务")
+            return
+
+        # 1. 执行上传
         file_id, file_name = self._step_1_upload()
+        
+        # 2. 如果上传成功，执行分享
         if file_id and file_name:
             self.sleep()
             self._step_2_share(file_id, file_name)
 
     def _step_1_upload(self):
         create_url = "https://personal-kd-njs.yun.139.com/hcy/file/create"
+        KNOWN_HASH = "6b86b273ff34fce19d6b804eff5a3f5747ada4eaa22f1d49c01e52ddb7875b4b"
+        KNOWN_SIZE = 1
         file_name = f"reward_auto_{int(time.time())}_{random.randint(100,999)}.txt"
-        tz_cn = timezone(timedelta(hours=8))
-        local_created_at = datetime.now(tz_cn).strftime('%Y-%m-%dT%H:%M:%S.') + datetime.now(tz_cn).strftime('%f')[:3] + "+08:00"
         
+        tz_cn = timezone(timedelta(hours=8))
+        now = datetime.now(tz_cn)
+        local_created_at = now.strftime('%Y-%m-%dT%H:%M:%S.') + now.strftime('%f')[:3] + "+08:00"
+
         headers = {
-            "x-yun-url-type": "1", "x-yun-op-type": "1", "x-yun-sub-op-type": "100", "x-yun-api-version": "v1",
-            "x-yun-client-info": self.app_client_info, "x-yun-app-channel": "10000023", "x-huawei-channelsrc": "10000023",
-            "accept-language": "zh-CN", "x-yun-uni": self.yun_uni, "authorization": self.Authorization, 
-            "content-type": "application/json; charset=UTF-8", "user-agent": "okhttp/4.12.0"
+            "host": "personal-kd-njs.yun.139.com",
+            "x-yun-url-type": "1",
+            "x-yun-op-type": "1",
+            "x-yun-sub-op-type": "100",
+            "x-yun-api-version": "v1",
+            "x-yun-client-info": self.app_client_info,
+            "x-yun-app-channel": "10000023",
+            "x-huawei-channelsrc": "10000023",
+            "accept-language": "zh-CN",
+            "x-yun-uni": self.yun_uni,
+            "authorization": self.Authorization,
+            "content-type": "application/json; charset=UTF-8",
+            "user-agent": "okhttp/4.12.0"
         }
+
         payload = {
-            "contentHash": "6b86b273ff34fce19d6b804eff5a3f5747ada4eaa22f1d49c01e52ddb7875b4b",
-            "contentHashAlgorithm": "SHA256", "contentType": "application/oct-stream", "fileRenameMode": "force_rename",
-            "localCreatedAt": local_created_at, "name": file_name, "parallelUpload": True, "parentFileId": "/", 
-            "partInfos": [{"partNumber": 1, "partSize": 1, "start": 0, "end": 1, "parallelHashCtx": {"partOffset": 0}}],
-            "size": 1, "storyVideoFile": False, "type": "file", "userRegion": {"cityCode": "376", "provinceCode": "371"}
+            "contentHash": KNOWN_HASH,
+            "contentHashAlgorithm": "SHA256",
+            "contentType": "application/oct-stream",
+            "fileRenameMode": "force_rename",
+            "localCreatedAt": local_created_at,
+            "name": file_name,
+            "parallelUpload": True,
+            "parentFileId": "/",
+            "partInfos": [{"partNumber": 1, "partSize": KNOWN_SIZE, "start": 0, "end": KNOWN_SIZE, "parallelHashCtx": {"partOffset": 0}}],
+            "size": KNOWN_SIZE,
+            "storyVideoFile": False,
+            "type": "file",
+            "userRegion": {"cityCode": "376", "provinceCode": "371"}
         }
+        
+        self.log(f'- 正在执行秒传: {file_name}')
         try:
+            # 这里的请求不能用 session，因为 headers 冲突
             resp = requests.post(create_url, headers=headers, json=payload, timeout=10)
-            if resp.status_code == 200 and resp.json().get("success"):
-                fid = resp.json().get("data", {}).get('fileId')
-                self.log(f"   ✅ 上传成功 (ID: {fid})")
-                return fid, file_name
-        except: pass
+            if resp.status_code == 200:
+                res_json = resp.json()
+                if res_json.get("success"):
+                    data = res_json.get("data", {})
+                    file_id = data.get('fileId')
+                    upload_type = "秒传" if data.get("rapidUpload") else "普通上传"
+                    self.log(f" ✅ [上传成功] {upload_type} (ID: {file_id})")
+                    return file_id, file_name
+                else:
+                    self.log(f" ❌ [上传失败] {res_json.get('message')}")
+            else:
+                self.log(f" ❌ [上传失败] HTTP {resp.status_code}")
+        except Exception as e:
+            self.log(f" ❌ [上传异常] {e}")
         return None, None
 
     def _step_2_share(self, file_id, file_name):
+        self.log(f'- 正在分享文件: {file_id}...')
         url = "https://yun.139.com/orchestration/personalCloud-rebuild/outlink/v1.0/getOutLink"
+        auth_cookie = f"ud_id={self.yun_uni}; token={self.auth_token};"
+        
         headers = {
-            "Authorization": self.Authorization, "Cookie": f"ud_id={self.yun_uni}; token={self.auth_token};",
-            "Content-Type": "application/json;charset=UTF-8", "User-Agent": "okhttp/4.12.0",
-            "x-yun-client-info": self.app_client_info, "x-yun-app-channel": "10000023", "x-yun-uni": self.yun_uni
+            "Authorization": self.Authorization,
+            "Cookie": auth_cookie,
+            "Content-Type": "application/json;charset=UTF-8",
+            "User-Agent": "okhttp/4.12.0",
+            "Origin": "https://yun.139.com",
+            "Referer": "https://yun.139.com/w/",
+            "x-yun-client-info": self.app_client_info,
+            "x-yun-app-channel": "10000023",
+            "x-huawei-channelsrc": "10000023",
+            "x-yun-uni": self.yun_uni,
         }
+
         payload = {
             "getOutLinkReq": {
                 "subLinkType": 0, "encrypt": 1, "coIDLst": [file_id], "caIDLst": [], "pubType": 1,
@@ -314,138 +377,204 @@ class YP:
                 "commonAccountInfo": {"account": self.account, "accountType": 1}
             }
         }
+
         try:
-            if requests.post(url, headers=headers, json=payload, timeout=10).json().get("success"):
-                self.log("   ✅ 分享成功")
-        except: pass
+            resp = requests.post(url, headers=headers, json=payload, timeout=10)
+            res_json = resp.json()
+            if res_json.get("success"):
+                self.log(" ✅ [分享成功] 已伪装APP渠道")
+            else:
+                self.log(f" ❌ [分享失败] {res_json.get('message')}")
+        except Exception as e:
+            self.log(f" ❌ [分享异常] {e}")
 
     @catch_errors
     def signin_status(self):
+        self.sleep()
         url = 'https://caiyun.feixin.10086.cn/market/signin/page/info?client=app'
         res = self.send_request(url, headers=self.jwtHeaders, cookies=self.cookies).json()
         if res['msg'] == 'success':
-            if not res['result'].get('todaySignIn'):
-                self.log('   ❌ 未签到，尝试补签...')
-                self.send_request('https://caiyun.feixin.10086.cn/market/manager/commonMarketconfig/getByMarketRuleName?marketName=sign_in_3', headers=self.jwtHeaders, cookies=self.cookies)
-            else: self.log('   ✅ 已签到')
+            if res['result'].get('todaySignIn'):
+                self.log('✅ 已签到')
+            else:
+                self.log('❌ 未签到，尝试补签...')
+                sign_url = 'https://caiyun.feixin.10086.cn/market/manager/commonMarketconfig/getByMarketRuleName?marketName=sign_in_3'
+                sign_res = self.send_request(sign_url, headers=self.jwtHeaders, cookies=self.cookies).json()
+                if sign_res['msg'] == 'success':
+                    self.log('✅ 签到成功')
+                else:
+                    self.log(f"签到失败: {sign_res['msg']}")
 
     @catch_errors
     def click(self):
         url = "https://caiyun.feixin.10086.cn/market/signin/task/click?key=task&id=319"
+        success_count = 0
         for _ in range(self.click_num):
-            self.send_request(url, headers=self.jwtHeaders, cookies=self.cookies)
-            time.sleep(0.1)
+            res = self.send_request(url, headers=self.jwtHeaders, cookies=self.cookies).json()
+            time.sleep(0.2)
+            if 'result' in res:
+                success_count += 1
+        if success_count > 0:
+            self.log(f"👉 戳一下成功: {success_count}次")
 
     @catch_errors
     def get_tasklist(self, url_name, app_type):
         url = f'https://caiyun.feixin.10086.cn/market/signin/task/taskList?marketname={url_name}'
         res = self.send_request(url, headers=self.jwtHeaders, cookies=self.cookies).json()
+        self.sleep()
         task_list = res.get('result', {})
         for task_type, tasks in task_list.items():
             if task_type in ["new", "hidden", "hiddenabc"]: continue
             if app_type in ['cloud_app', 'email_app'] and task_type in ['month', 'day']:
                 for task in tasks:
-                    if task.get('state') != 'FINISH':
-                        self.do_task(task.get('id'), task_type, app_type)
+                    task_id = task.get('id')
+                    task_name = task.get('name', '')
+                    task_state = task.get('state', '')
+                    # 跳过无需做的任务
+                    if app_type == 'cloud_app' and task_id in [110, 113, 417, 409, 404]: continue
+                    if app_type == 'email_app' and task_id in [1004, 1005, 1015, 1020]: continue
+                    
+                    if task_state != 'FINISH':
+                        self.log(f'- 去完成: {task_name} (ID: {task_id})')
+                        self.do_task(task_id, task_type, app_type)
+                        time.sleep(1)
 
     @catch_errors
     def do_task(self, task_id, task_type, app_type):
-        if app_type == 'cloud_app' and task_id in [110, 113, 417, 409, 404]: return
-        if app_type == 'email_app' and task_id in [1004, 1005, 1015, 1020]: return
-        
-        self.send_request(f'https://caiyun.feixin.10086.cn/market/signin/task/click?key=task&id={task_id}', headers=self.jwtHeaders, cookies=self.cookies)
-        if app_type == 'cloud_app' and task_id == 106: self.run_upload_task()
-        elif app_type == 'cloud_app' and task_id == 107: self.create_note_flow()
+        task_url = f'https://caiyun.feixin.10086.cn/market/signin/task/click?key=task&id={task_id}'
+        self.send_request(task_url, headers=self.jwtHeaders, cookies=self.cookies)
+        if app_type == 'cloud_app' and task_type == 'day':
+            if task_id == 106: self.run_upload_task()
+            elif task_id == 107:
+                self.log('- 执行笔记任务...')
+                self.refresh_notetoken()
+                self.create_note_flow()
+
+    def refresh_notetoken(self):
+        note_url = 'http://mnote.caiyun.feixin.10086.cn/noteServer/api/authTokenRefresh.do'
+        payload = {"authToken": self.auth_token, "userPhone": self.account}
+        headers = {'Content-Type': 'application/json; charset=UTF-8', 'Host': 'mnote.caiyun.feixin.10086.cn'}
+        try:
+            res = self.send_request(note_url, headers=headers, data=payload, method="POST")
+            self.note_token = res.headers.get('NOTE_TOKEN')
+            self.note_auth = res.headers.get('APP_AUTH')
+        except: pass
 
     def create_note_flow(self):
-        # 简化的笔记逻辑，仅为完成任务
+        sync_url = 'http://mnote.caiyun.feixin.10086.cn/noteServer/api/syncNotebookV3.do'
+        headers = {'APP_NUMBER': self.account, 'APP_AUTH': self.note_auth, 'NOTE_TOKEN': self.note_token, 'Host': 'mnote.caiyun.feixin.10086.cn', 'Content-Type': 'application/json; charset=UTF-8'}
+        payload = {"addNotebooks": [], "delNotebooks": [], "notebookRefs": [], "updateNotebooks": []}
         try:
-            note_url = 'http://mnote.caiyun.feixin.10086.cn/noteServer/api/authTokenRefresh.do'
-            res = self.send_request(note_url, headers={'Content-Type':'application/json'}, data={"authToken": self.auth_token, "userPhone": self.account}, method="POST")
-            note_token = res.headers.get('NOTE_TOKEN')
-            app_auth = res.headers.get('APP_AUTH')
-            
-            headers = {'APP_NUMBER': self.account, 'APP_AUTH': app_auth, 'NOTE_TOKEN': note_token, 'Content-Type': 'application/json'}
-            sync_res = self.send_request('http://mnote.caiyun.feixin.10086.cn/noteServer/api/syncNotebookV3.do', headers=headers, data={"addNotebooks": [], "delNotebooks": [], "notebookRefs": [], "updateNotebooks": []}, method='POST').json()
-            notebook_id = sync_res['notebooks'][0]['notebookId']
-            
+            res = self.send_request(sync_url, headers=headers, data=payload, method='POST').json()
+            self.notebook_id = res['notebooks'][0]['notebookId']
+            create_url = 'http://mnote.caiyun.feixin.10086.cn/noteServer/api/createNote.do'
             note_id = ''.join(random.choice('abcdef0123456789') for _ in range(32))
             ts = str(int(time.time() * 1000))
-            payload = {"contents": [{"data": "Auto", "noteId": note_id, "type": "RICHTEXT"}], "createtime": ts, "noteid": note_id, "tags": [{"id": notebook_id, "text": "默认笔记本"}], "title": "Task", "updatetime": ts, "userphone": self.account}
-            self.send_request('http://mnote.caiyun.feixin.10086.cn/noteServer/api/createNote.do', headers=headers, data=payload, method="POST")
-            self.log("   ✅ 笔记任务完成")
-        except: pass
+            note_payload = {
+                "archived": 0, "attachmentdir": note_id, "attachments": [], 
+                "contents": [{"data": "AutoTask", "noteId": note_id, "type": "RICHTEXT"}],
+                "createtime": ts, "noteid": note_id, "tags": [{"id": self.notebook_id, "text": "默认笔记本"}],
+                "title": "AutoTask", "updatetime": ts, "userphone": self.account
+            }
+            res_create = self.send_request(create_url, headers=headers, data=note_payload, method="POST")
+            if res_create.status_code == 200: self.log(' └ 笔记创建成功')
+        except: self.log(' └ 笔记创建失败')
 
     @catch_errors
     def wxsign(self):
-        self.send_request('https://caiyun.feixin.10086.cn/market/playoffic/followSignInfo?isWx=true', headers=self.jwtHeaders, cookies=self.cookies)
+        url = 'https://caiyun.feixin.10086.cn/market/playoffic/followSignInfo?isWx=true'
+        res = self.send_request(url, headers=self.jwtHeaders, cookies=self.cookies).json()
+        if res['msg'] == 'success' and res['result'].get('todaySignIn'): self.log('✅ 公众号已签到')
+        else: self.log('ℹ️ 公众号未签到或未绑定')
 
     @catch_errors
     def shake(self):
         url = "https://caiyun.feixin.10086.cn:7071/market/shake-server/shake/shakeIt?flag=1"
+        count = 0
         for _ in range(self.click_num):
-            self.send_request(url, headers=self.jwtHeaders, cookies=self.cookies, method='POST')
-            time.sleep(0.2)
+            res = self.send_request(url, headers=self.jwtHeaders, cookies=self.cookies, method='POST').json()
+            time.sleep(0.5)
+            if res["result"].get("shakePrizeconfig"): count += 1
+        if count > 0: self.log(f"👋 摇一摇中奖: {count}次")
 
     @catch_errors
     def surplus_num(self):
-        res = self.send_request('https://caiyun.feixin.10086.cn/market/playoffic/drawInfo', headers=self.jwtHeaders).json()
+        info_url = 'https://caiyun.feixin.10086.cn/market/playoffic/drawInfo'
+        draw_url = "https://caiyun.feixin.10086.cn/market/playoffic/draw"
+        res = self.send_request(info_url, headers=self.jwtHeaders).json()
         if res.get('msg') == 'success':
             remain = res['result'].get('surplusNumber', 0)
             if remain > 50 - self.draw:
-                self.log(f"🎁 剩余抽奖: {remain}次, 执行抽奖...")
+                self.log(f"🎁 剩余抽奖: {remain}次, 开始抽奖...")
                 for _ in range(self.draw):
-                    self.send_request("https://caiyun.feixin.10086.cn/market/playoffic/draw", headers=self.jwtHeaders)
-                    time.sleep(1)
+                    d_res = self.send_request(draw_url, headers=self.jwtHeaders).json()
+                    if d_res.get("code") == 0: self.log(f" └ 获得: {d_res['result'].get('prizeName')}")
+                    self.sleep()
 
     @catch_errors
     def backup_cloud(self):
-        try:
-            if self.send_request('https://caiyun.feixin.10086.cn/market/backupgift/info', headers=self.jwtHeaders).json().get('result', {}).get('state') == 0:
-                self.send_request('https://caiyun.feixin.10086.cn/market/backupgift/receive', headers=self.jwtHeaders)
-                self.log("   ✅ 领取备份奖励")
-        except: pass
+        url = 'https://caiyun.feixin.10086.cn/market/backupgift/info'
+        res = self.send_request(url, headers=self.jwtHeaders).json()
+        state = res.get('result', {}).get('state', -1)
+        if state == 0:
+            rec_url = 'https://caiyun.feixin.10086.cn/market/backupgift/receive'
+            r = self.send_request(rec_url, headers=self.jwtHeaders).json()
+            self.log(f"📥 领取备份奖励: {r.get('result', {}).get('result')}云朵")
+        exp_url = 'https://caiyun.feixin.10086.cn/market/signin/page/taskExpansion'
+        exp_res = self.send_request(exp_url, headers=self.jwtHeaders, cookies=self.cookies).json()
+        result = exp_res.get('result', {})
+        if result.get('preMonthBackup') and not result.get('curMonthBackupTaskAccept'):
+            date = result.get('acceptDate')
+            rec_exp_url = f'https://caiyun.feixin.10086.cn/market/signin/page/receiveTaskExpansion?acceptDate={date}'
+            r2 = self.send_request(rec_exp_url, headers=self.jwtHeaders, cookies=self.cookies).json()
+            if r2.get("code") == 0: self.log(f"🎈 领取膨胀云朵: {r2['result'].get('cloudCount')}朵")
 
     @catch_errors
     def open_send(self):
-        try:
-            res = self.send_request('https://caiyun.feixin.10086.cn/market/msgPushOn/task/status', headers=self.jwtHeaders).json().get('result', {})
-            if res.get('pushOn') == 1:
-                url = 'https://caiyun.feixin.10086.cn/market/msgPushOn/task/obtain'
-                if res.get('firstTaskStatus') != 3: self.send_request(url, headers=self.jwtHeaders, data={"type": 1}, method="POST")
-                if res.get('secondTaskStatus') == 2: self.send_request(url, headers=self.jwtHeaders, data={"type": 2}, method="POST")
-        except: pass
+        url = 'https://caiyun.feixin.10086.cn/market/msgPushOn/task/status'
+        res = self.send_request(url, headers=self.jwtHeaders).json()
+        result = res.get('result', {})
+        if result.get('pushOn') == 1:
+            reward_url = 'https://caiyun.feixin.10086.cn/market/msgPushOn/task/obtain'
+            if result.get('firstTaskStatus') != 3:
+                self.send_request(reward_url, headers=self.jwtHeaders, data={"type": 1}, method="POST")
+                self.log("🔔 领取通知奖励1")
+            if result.get('secondTaskStatus') == 2:
+                self.send_request(reward_url, headers=self.jwtHeaders, data={"type": 2}, method="POST")
+                self.log("🔔 领取通知奖励2")
 
     @catch_errors
     def receive(self):
-        self.send_request("https://caiyun.feixin.10086.cn/market/signin/page/receive", headers=self.jwtHeaders, cookies=self.cookies)
-        res = self.send_request(f"https://caiyun.feixin.10086.cn/market/prizeApi/checkPrize/getUserPrizeLogPage?currPage=1&pageSize=15&_={self.timestamp}", headers=self.jwtHeaders, cookies=self.cookies).json()
+        rec_url = "https://caiyun.feixin.10086.cn/market/signin/page/receive"
+        res = self.send_request(rec_url, headers=self.jwtHeaders, cookies=self.cookies).json()
+        prize_url = f"https://caiyun.feixin.10086.cn/market/prizeApi/checkPrize/getUserPrizeLogPage?currPage=1&pageSize=15&_={self.timestamp}"
+        p_res = self.send_request(prize_url, headers=self.jwtHeaders, cookies=self.cookies).json()
+        recv = res["result"].get("receive", 0)
+        total = res["result"].get("total", 0)
+        pending = ""
         try:
-            pending = [item.get('prizeName') for item in res.get('result', {}).get('result', []) if item.get('flag') == 1]
-            if pending: self.log(f"🎁 待领奖品: {pending}")
+            for item in p_res.get('result', {}).get('result', []):
+                if item.get('flag') == 1: pending += f" [{item.get('prizeName')}]"
         except: pass
+        self.log(f"\n☁️ 待领: {recv} | 总云朵: {total}")
+        if pending: self.log(f"🎁 未领奖品: {pending}")
 
-    # ================= 主运行流程 =================
-
-    def run(self, target_list=None, view_only=False):
-        if not self.Authorization: 
-            return f"❌ 账号 {self.encrypt_account} 配置错误\n"
-        
+    def run(self, view_only=False, skip_game=False):
+        if not self.valid: return f"❌ 账号 {self.encrypt_account} 配置错误\n"
         self.log(f"========== 用户 [{self.encrypt_account}] ==========")
-        
-        # --- 核心修改：登录校验熔断 ---
-        # 如果登录失败，直接 return，不执行后续任何代码
         if not self.jwt():
-            self.log("⛔️ 登录失败，跳过该账号所有后续任务")
+            self.log("❌ 登录失败 (SSO/JWT错误)")
             return self.log_str
-        # ---------------------------
         
         if view_only:
             self.log("查看模式已省略，请使用正常模式运行")
             return self.log_str
         
-        # 1. 执行日常任务
-        self.log("👉 开始日常任务...")
+        # 3.1 跑游戏 (如果开启且不跳过)
+        if GAME_ENABLED and not skip_game:
+            self.run_game()
+        
+        # 3.2 跑日常
         self.signin_status()
         self.click()
         self.wxsign()
@@ -457,42 +586,77 @@ class YP:
         self.get_tasklist(url_name='newsign_139mail', app_type='email_app')
         self.receive()
         
-        # 2. 执行互助 (日常完成后，增加游戏次数)
-        if target_list:
-            self.run_invite(target_list)
-
-        # 3. 执行游戏 (此时次数已满，开始消耗)
-        self.run_hecheng()
-        
         return self.log_str
 
-def run_ydyp(view_only=False):
-    mode_text = "任务状态查看" if view_only else "任务执行"
-    full_log = f"【移动云盘 - {mode_text}】\n"
+# ================= 🚀 主执行逻辑 =================
+def run_all_accounts():
+    """执行完整流程：互助(批量) -> 个人任务(游戏+日常合并)"""
+    full_log = f"【移动云盘 - 全自动任务】\n"
+    full_log += f"开始时间: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n"
+    full_log += "=" * 50 + "\n\n"
     
     if not ydypCK:
-        return full_log + "⛔️ 未配置 YDYP_CK (请设置为 Basic...#手机#Token#YunID 格式)\n"
-
-    cookies = re.split(r'[&\n]', ydypCK)
-    valid_cookies = [c for c in cookies if c.strip()]
+        return full_log + "⛔️ 未配置 YDYP_CK\n"
     
-    # --- 提取所有账号手机号用于互助 ---
-    all_phones = []
-    for c in valid_cookies:
-        try:
-            parts = c.split('#')
-            if len(parts) >= 2: all_phones.append(parts[1])
-        except: pass
+    # --- 步骤1：初始化并登录所有账号 ---
+    cookies = [ck.strip() for ck in re.split(r'[&\n]', ydypCK) if ck.strip()]
+    accounts = []
+    phone_numbers = []
     
-    # --- 遍历执行 ---
-    for i, account in enumerate(valid_cookies, 1):
-        if not account.strip(): continue
-        yp = YP(account)
-        # 将手机号名单传入
-        full_log += yp.run(target_list=all_phones, view_only=view_only) + "\n"
-        time.sleep(3)
+    print("⏳ 正在验证所有账号登录状态...") 
+    for ck in cookies:
+        yp = YP(ck)
+        # 尝试登录
+        if yp.valid and yp.jwt():
+            accounts.append(yp)
+            phone_numbers.append(yp.account)
+            print(f"  ✅ 账号 {yp.encrypt_account} 登录成功")
+        else:
+            full_log += f"⚠️ 账号 {yp.encrypt_account} 登录失败(CK失效)，已跳过\n"
+            print(f"  ❌ 账号 {yp.encrypt_account} 登录失败")
+    
+    if not accounts:
+        return full_log + "\n⛔️ 没有可用的有效账号，请更新CK！\n"
+    
+    full_log += f"✅ 成功加载 {len(accounts)} 个有效账号\n\n"
+    
+    # --- 步骤2：执行互助 (必须先让所有人互助完，才能最大化游戏次数) ---
+    if INVITE_ENABLED and len(accounts) > 1:
+        full_log += "🤝 ===== 互助邀请阶段 =====\n"
+        for i, helper in enumerate(accounts):
+            full_log += f"[{helper.encrypt_account}] 开始助力他人...\n"
+            for j, target_phone in enumerate(phone_numbers):
+                if i != j:
+                    helper.do_invite(target_phone)
+            # 收集互助日志并清空
+            full_log += helper.log_str + "\n"
+            helper.log_str = "" 
+            time.sleep(1)
+        full_log += "✅ 互助阶段完成\n\n"
+    
+    # --- 步骤3：个人任务循环 (游戏 + 日常 放在一起跑) ---
+    for i, account in enumerate(accounts):
+        full_log += f"👤 ===== 账号 {i+1}: {account.encrypt_account} =====\n"
         
+        # 3.1 跑游戏 (如果开启)
+        if GAME_ENABLED:
+            account.run_game()
+            full_log += account.log_str
+            account.log_str = ""
+        
+        # 3.2 跑日常 (跳过游戏参数设为True，因为上面刚跑过)
+        full_log += account.run(view_only=False, skip_game=True)
+        
+        full_log += account.log_str
+        account.log_str = ""
+        
+        full_log += "\n" 
+        time.sleep(3) # 账号间休息
+    
+    full_log += "=" * 50 + "\n"
+    full_log += f"结束时间: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n"
+    
     return full_log
 
 if __name__ == "__main__":
-    print(run_ydyp())
+    print(run_all_accounts())
