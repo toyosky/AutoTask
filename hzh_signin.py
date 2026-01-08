@@ -49,13 +49,29 @@ def run_hzh():
             if code == 200:
                 content = data.get("content", {})
                 point = content.get("point", 0)
+                act_point = content.get("activityPoints", 0) # 新增：活跃度
                 year_count = content.get("yearSignInCount", 0)
-                awards = content.get("award", [])
-                obtained = [a["awardName"] for a in awards if a.get("awardGetType") == "1"]
                 
-                log_content += f"✅ 签到成功 | 积分+{point} | 年度:{year_count}天\n"
-                if obtained:
-                    log_content += f"🎁 获得奖励: {', '.join(obtained)}\n"
+                # 优化奖励获取逻辑
+                awards = content.get("award", [])
+                # 筛选实际获得的奖励 (awardGetType 为 "1")
+                obtained_awards = [a for a in awards if a.get("awardGetType") == "1"]
+                
+                log_content += f"✅ 签到成功 | 积分+{point} | 活跃+{act_point} | 年度:{year_count}天\n"
+                
+                if obtained_awards:
+                    log_content += "🎁 盲盒奖励：\n"
+                    for a in obtained_awards:
+                        name = a.get("awardName", "未知")
+                        value = a.get("awardValue", "")
+                        # 格式化输出：如果有数值则显示数值
+                        if value:
+                            log_content += f"   • {name} ({value})\n"
+                        else:
+                            log_content += f"   • {name}\n"
+                else:
+                    log_content += "🎁 盲盒奖励：今日无盲盒\n"
+                    
             elif code == 5004 or "已签到" in msg:
                 log_content += f"ℹ️ 今日已签到: {msg}\n"
             else:
