@@ -653,7 +653,7 @@ def run_all_accounts():
             # 收集互助日志并清空
             full_log += helper.log_str + "\n"
             helper.log_str = "" 
-            time.sleep(1)
+            time.sleep(2.5)
         full_log += "✅ 互助阶段完成\n\n"
     
     # --- 步骤3：个人任务循环 (游戏 + 日常 放在一起跑) ---
