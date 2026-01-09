@@ -27,42 +27,63 @@ ua = 'Mozilla/5.0 (Linux; Android 13; PDRM00 Build/TP1A.220905.001; wv) AppleWeb
 
 class YP:
     def __init__(self, cookie):
-        self.log_str = ""
-        self.notebook_id = None
-        self.note_token = None
-        self.note_auth = None
-        self.click_num = 15
-        self.draw = 1
-        self.session = requests.Session()
-        self.timestamp = str(int(round(time.time() * 1000)))
-        self.cookies = {'sensors_stay_time': self.timestamp}
-        
-        # 解析 Cookie
-        try:
-            parts = cookie.split("#")
-            self.Authorization = parts[0]
-            self.account = parts[1]
-            self.auth_token = parts[2]
-            self.yun_uni = parts[3] if len(parts) > 3 else None
-            self.encrypt_account = self.account[:3] + "****" + self.account[7:]
-            self.valid = True
-        except:
-            self.Authorization = None
-            self.account = "Unknown"
-            self.auth_token = ""
-            self.yun_uni = None
-            self.encrypt_account = "格式错误"
-            self.valid = False
-        
-        # 基础请求头
-        self.jwtHeaders = {
-            'User-Agent': ua,
-            'Accept': '*/*',
-            'Host': 'caiyun.feixin.10086.cn:7071',
-        }
-        
-        # 伪装设备信息
-        self.app_client_info = "4|127.0.0.1|1|12.4.3|OPPO|PDRM00|DF1290E08406BF121D2685BE1C3A50EA|02-00-00-00-00-00|android 13|1080X2245|zh||||013|0|"
+            self.log_str = ""
+            self.notebook_id = None
+            self.note_token = None
+            self.note_auth = None
+            self.click_num = 15
+            self.draw = 1
+            self.session = requests.Session()
+            self.timestamp = str(int(round(time.time() * 1000)))
+            self.cookies = {'sensors_stay_time': self.timestamp}
+            
+            # 解析 Cookie
+            try:
+                parts = cookie.split("#")
+                self.Authorization = parts[0]
+                self.account = parts[1]
+                self.auth_token = parts[2]
+                self.yun_uni = parts[3] if len(parts) > 3 else None
+                self.encrypt_account = self.account[:3] + "****" + self.account[7:]
+                self.valid = True
+            except:
+                self.Authorization = None
+                self.account = "Unknown"
+                self.auth_token = ""
+                self.yun_uni = None
+                self.encrypt_account = "格式错误"
+                self.valid = False
+            
+            # ================= 🆕 设备模拟核心修改 =================
+            # 随机生成一个 32位 的 16进制字符串，模拟唯一的设备 ID
+            random_device_id = ''.join(random.choices('0123456789ABCDEF', k=32))
+            
+            # 随机生成一个 伪MAC地址 (格式 XX-XX-XX-XX-XX-XX)
+            random_mac = '-'.join([''.join(random.choices('0123456789ABCDEF', k=2)) for _ in range(6)])
+            
+            # 随机选择一个手机品牌型号，增加真实度
+            device_models = [
+                ('OPPO', 'PDRM00'), ('VIVO', 'V2055A'), ('XIAOMI', 'M2012K11AC'), 
+                ('HUAWEI', 'ANA-AN00'), ('HONOR', 'TNA-AN00')
+            ]
+            brand, model = random.choice(device_models)
+            
+            # 构造随机的 User-Agent
+            # 模拟不同的 Android 版本 (10-13) 和 Chrome 版本
+            android_ver = random.randint(10, 13)
+            chrome_ver = random.randint(100, 120)
+            self.dynamic_ua = f'Mozilla/5.0 (Linux; Android {android_ver}; {model} Build/TP1A.220905.001; wv) AppleWebKit/537.36 (KHTML, like Gecko) Version/4.0 Chrome/{chrome_ver}.0.5359.128 Mobile Safari/537.36 MCloudApp/12.4.3'
+            
+            # 构造随机的 x-yun-client-info (这是移动云盘鉴别设备的关键字段)
+            # 格式解析：类型|IP|?|版本|品牌|型号|设备ID|MAC|系统|分辨率|语言|...
+            self.app_client_info = f"4|127.0.0.1|1|12.4.3|{brand}|{model}|{random_device_id}|{random_mac}|android {android_ver}|1080X2245|zh||||013|0|"
+            
+            # 更新基础请求头
+            self.jwtHeaders = {
+                'User-Agent': self.dynamic_ua, # 使用随机生成的 UA
+                'Accept': '*/*',
+                'Host': 'caiyun.feixin.10086.cn:7071',
+            }
 
     def log(self, msg):
         print(msg)
@@ -256,6 +277,7 @@ class YP:
             if resp.status_code == 200:
                 try:
                     data = resp.json()
+                    self.log(f" 🔍 [调试] 助力 {target_phone} 返回: {json.dumps(data, ensure_ascii=False)}")
                     if data.get('code') == 0:
                         self.log(f" ✅ 助力成功 -> {target_phone[:3]}****{target_phone[7:]}")
                         return True
