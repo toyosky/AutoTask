@@ -1,7 +1,7 @@
 import os
 import requests
 from hzh_signin import run_hzh
-from ydyp_signin import run_ydyp
+from ydyp_signin import run_all_accounts
 
 # 获取 PushPlus Token
 PUSHPLUS_TOKEN = os.getenv("PUSHPLUS_TOKEN")
@@ -32,7 +32,7 @@ if __name__ == "__main__":
     print(">>> 华住任务完成")
     
     # 2. 执行移动云盘
-    log_ydyp = run_ydyp()
+    log_ydyp = run_all_accounts()
     print(">>> 移动云盘任务完成")
     
     # 3. 合并内容
