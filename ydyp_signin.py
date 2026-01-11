@@ -151,7 +151,7 @@ class YP:
         }
 
     def _game_sign(self, req_id, ts, nonce):
-    """计算签名（适用于所有游戏相关接口）"""
+        """计算签名（适用于所有游戏相关接口）"""
         raw = f"{GAME_SALT}{req_id}{ts}{nonce}{GAME_SALT}"
         return hashlib.md5(raw.encode('utf-8')).hexdigest()
 
