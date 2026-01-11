@@ -150,11 +150,6 @@ class YP:
             'jwtToken': self.jwtHeaders.get('jwtToken')
         }
 
-    def _game_sign(self, req_id, ts, nonce):
-        """计算签名（适用于所有游戏相关接口）"""
-        raw = f"{GAME_SALT}{req_id}{ts}{nonce}{GAME_SALT}"
-        return hashlib.md5(raw.encode('utf-8')).hexdigest()
-
     def _encode_inviter(self, phone):
         """Base64 编码手机号（根据抓包，inviter参数是Base64编码的）"""
         import base64
@@ -304,10 +299,12 @@ class YP:
         time.sleep(1)  # 间隔1秒
         url = "https://caiyun.feixin.10086.cn:7071/market/signin/hecheng1T/beinvite"
         ts3, req_id3, nonce3 = str(int(time.time() * 1000)), str(uuid.uuid4()), str(uuid.uuid4())
+
+        browser_ua = "Mozilla/5.0 (Linux; Android 13; PDRM00 Build/TP1A.220905.001) AppleWebKit/537.36 (KHTML, like Gecko) Version/4.0 Chrome/108.0.5359.128 Mobile Safari/537.36"
         
         invite_headers = {
             'Host': 'caiyun.feixin.10086.cn:7071',
-            'User-Agent': ua,
+            'User-Agent': browser_ua,
             'x-timestamp': ts3,
             'x-nonce': nonce3,
             'x-request-id': req_id3,
