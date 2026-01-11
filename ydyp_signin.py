@@ -212,123 +212,123 @@ class YP:
         self.log(f"📊 游戏结束，本次共完成 {succ_count} 次。")
         
     @catch_errors
-        def do_invite(self, target_phone):
-            """执行助力邀请（Via浏览器 伪装修正版）"""
-            self.log(f" 🔄 准备助力 {target_phone[:3]}****{target_phone[7:]}...")
+    def do_invite(self, target_phone):
+        """执行助力邀请（Via浏览器 伪装修正版）"""
+        self.log(f" 🔄 准备助力 {target_phone[:3]}****{target_phone[7:]}...")
+        
+        # 【关键修改】定义一个纯浏览器的 UA，不带 MCloudApp 标识
+        # 这才是真正的 "Via浏览器" 在安卓手机上的样子
+        browser_ua = "Mozilla/5.0 (Linux; Android 13; PDRM00 Build/TP1A.220905.001) AppleWebKit/537.36 (KHTML, like Gecko) Version/4.0 Chrome/108.0.5359.128 Mobile Safari/537.36"
+
+        # ===== 步骤1：获取 ssoToken =====
+        query_url = "https://caiyun.feixin.10086.cn:7071/ycloud/api/cloud/userdomain/v2/querySpecToken"
+        ts, req_id, nonce = str(int(time.time() * 1000)), str(uuid.uuid4()), str(uuid.uuid4())
+        
+        query_headers = {
+            'Host': 'caiyun.feixin.10086.cn:7071',
+            'User-Agent': browser_ua,  # 使用浏览器 UA
+            'x-timestamp': ts,
+            'x-nonce': nonce,
+            'x-request-id': req_id,
+            'x-signature': self._game_sign(req_id, ts, nonce),
+            'token': self.auth_token,
+            'jwtToken': self.jwtHeaders.get('jwtToken'),
+            'referer': f'https://caiyun.feixin.10086.cn:7071/portal/synthesisonet/index.html?inviter={self._encode_inviter(target_phone)}&sourceid=1120',
+            'x-requested-with': 'mark.via' # 保持 Via 标识
+        }
+        
+        try:
+            resp1 = self.session.get(
+                query_url, 
+                headers=query_headers, 
+                params={"targetSourceId": "001005"},
+                timeout=10
+            )
+            # 调试：如果不成功，打印一下服务器到底回了什么
+            json_res = resp1.json()
+            sso_token = json_res.get('result')
             
-            # 【关键修改】定义一个纯浏览器的 UA，不带 MCloudApp 标识
-            # 这才是真正的 "Via浏览器" 在安卓手机上的样子
-            browser_ua = "Mozilla/5.0 (Linux; Android 13; PDRM00 Build/TP1A.220905.001) AppleWebKit/537.36 (KHTML, like Gecko) Version/4.0 Chrome/108.0.5359.128 Mobile Safari/537.36"
-    
-            # ===== 步骤1：获取 ssoToken =====
-            query_url = "https://caiyun.feixin.10086.cn:7071/ycloud/api/cloud/userdomain/v2/querySpecToken"
-            ts, req_id, nonce = str(int(time.time() * 1000)), str(uuid.uuid4()), str(uuid.uuid4())
-            
-            query_headers = {
-                'Host': 'caiyun.feixin.10086.cn:7071',
-                'User-Agent': browser_ua,  # 使用浏览器 UA
-                'x-timestamp': ts,
-                'x-nonce': nonce,
-                'x-request-id': req_id,
-                'x-signature': self._game_sign(req_id, ts, nonce),
-                'token': self.auth_token,
-                'jwtToken': self.jwtHeaders.get('jwtToken'),
-                'referer': f'https://caiyun.feixin.10086.cn:7071/portal/synthesisonet/index.html?inviter={self._encode_inviter(target_phone)}&sourceid=1120',
-                'x-requested-with': 'mark.via' # 保持 Via 标识
-            }
-            
-            try:
-                resp1 = self.session.get(
-                    query_url, 
-                    headers=query_headers, 
-                    params={"targetSourceId": "001005"},
-                    timeout=10
-                )
-                # 调试：如果不成功，打印一下服务器到底回了什么
-                json_res = resp1.json()
-                sso_token = json_res.get('result')
-                
-                if not sso_token:
-                    # 打印详细错误信息，方便排查
-                    self.log(f" ❌ ssoToken 为空，服务器返回: {json_res}")
-                    return False
-                
-                self.log(f" ✓ 已获取 ssoToken")
-                
-            except Exception as e:
-                self.log(f" ❌ 获取 ssoToken 异常: {e}")
+            if not sso_token:
+                # 打印详细错误信息，方便排查
+                self.log(f" ❌ ssoToken 为空，服务器返回: {json_res}")
                 return False
             
-            # ===== 步骤2：刷新 jwtToken =====
-            login_url = "https://caiyun.feixin.10086.cn:7071/portal/auth/v2/tyrzLogin.action"
-            ts2, req_id2, nonce2 = str(int(time.time() * 1000)), str(uuid.uuid4()), str(uuid.uuid4())
+            self.log(f" ✓ 已获取 ssoToken")
             
-            login_headers = {
-                'Host': 'caiyun.feixin.10086.cn:7071',
-                'User-Agent': browser_ua, # 使用浏览器 UA
-                'x-timestamp': ts2,
-                'x-nonce': nonce2,
-                'x-request-id': req_id2,
-                'x-signature': self._game_sign(req_id2, ts2, nonce2),
-                'token': self.auth_token,
-                'jwtToken': self.jwtHeaders.get('jwtToken'),
-                'referer': f'https://caiyun.feixin.10086.cn:7071/portal/synthesisonet/index.html?inviter={self._encode_inviter(target_phone)}&sourceid=1120',
-                'x-requested-with': 'mark.via'
-            }
-            
-            try:
-                resp2 = self.session.get(
-                    login_url,
-                    headers=login_headers,
-                    params={"ssoToken": sso_token, "openAccount": "0"},
-                    timeout=10
-                )
-                new_jwt = resp2.json().get('result', {}).get('token')
-                if not new_jwt:
-                    self.log(f" ❌ 新 jwtToken 为空: {resp2.text}")
-                    return False
-                
-                # 注意：这里我们只在当前函数内使用新token，不更新全局self.jwtHeaders
-                # 因为全局是APP环境，这里是浏览器环境，混用可能会有问题
-                self.log(f" ✓ 已刷新 jwtToken")
-                
-            except Exception as e:
-                self.log(f" ❌ 刷新 jwtToken 异常: {e}")
+        except Exception as e:
+            self.log(f" ❌ 获取 ssoToken 异常: {e}")
+            return False
+        
+        # ===== 步骤2：刷新 jwtToken =====
+        login_url = "https://caiyun.feixin.10086.cn:7071/portal/auth/v2/tyrzLogin.action"
+        ts2, req_id2, nonce2 = str(int(time.time() * 1000)), str(uuid.uuid4()), str(uuid.uuid4())
+        
+        login_headers = {
+            'Host': 'caiyun.feixin.10086.cn:7071',
+            'User-Agent': browser_ua, # 使用浏览器 UA
+            'x-timestamp': ts2,
+            'x-nonce': nonce2,
+            'x-request-id': req_id2,
+            'x-signature': self._game_sign(req_id2, ts2, nonce2),
+            'token': self.auth_token,
+            'jwtToken': self.jwtHeaders.get('jwtToken'),
+            'referer': f'https://caiyun.feixin.10086.cn:7071/portal/synthesisonet/index.html?inviter={self._encode_inviter(target_phone)}&sourceid=1120',
+            'x-requested-with': 'mark.via'
+        }
+        
+        try:
+            resp2 = self.session.get(
+                login_url,
+                headers=login_headers,
+                params={"ssoToken": sso_token, "openAccount": "0"},
+                timeout=10
+            )
+            new_jwt = resp2.json().get('result', {}).get('token')
+            if not new_jwt:
+                self.log(f" ❌ 新 jwtToken 为空: {resp2.text}")
                 return False
             
-            # ===== 步骤3：执行助力 =====
-            time.sleep(1) 
-            url = "https://caiyun.feixin.10086.cn:7071/market/signin/hecheng1T/beinvite"
-            ts3, req_id3, nonce3 = str(int(time.time() * 1000)), str(uuid.uuid4()), str(uuid.uuid4())
+            # 注意：这里我们只在当前函数内使用新token，不更新全局self.jwtHeaders
+            # 因为全局是APP环境，这里是浏览器环境，混用可能会有问题
+            self.log(f" ✓ 已刷新 jwtToken")
             
-            invite_headers = {
-                'Host': 'caiyun.feixin.10086.cn:7071',
-                'User-Agent': browser_ua, # 使用浏览器 UA
-                'x-timestamp': ts3,
-                'x-nonce': nonce3,
-                'x-request-id': req_id3,
-                'x-signature': self._game_sign(req_id3, ts3, nonce3),
-                'token': self.auth_token,
-                'jwtToken': new_jwt, 
-                'referer': f'https://caiyun.feixin.10086.cn:7071/portal/synthesisonet/index.html?inviter={self._encode_inviter(target_phone)}&sourceid=1120',
-                'accept': '*/*',
-                'x-requested-with': 'mark.via'
-            }
-            
-            try:
-                resp3 = self.session.get(url, headers=invite_headers, params={"inviter": target_phone}, timeout=10)
-                data = resp3.json()
-                if data.get('code') == 0:
-                    self.log(f" ✅ 助力成功 -> {target_phone[:3]}****{target_phone[7:]}")
-                    return True
-                else:
-                    msg = data.get('msg', '未知错误')
-                    # 如果真的是因为“助力过了”，你会在这里看到 msg 提示
-                    self.log(f" ⚠️ 助力失败: {msg}") 
-                    return False
-            except Exception as e:
-                self.log(f" ❌ 助力异常: {e}")
+        except Exception as e:
+            self.log(f" ❌ 刷新 jwtToken 异常: {e}")
+            return False
+        
+        # ===== 步骤3：执行助力 =====
+        time.sleep(1) 
+        url = "https://caiyun.feixin.10086.cn:7071/market/signin/hecheng1T/beinvite"
+        ts3, req_id3, nonce3 = str(int(time.time() * 1000)), str(uuid.uuid4()), str(uuid.uuid4())
+        
+        invite_headers = {
+            'Host': 'caiyun.feixin.10086.cn:7071',
+            'User-Agent': browser_ua, # 使用浏览器 UA
+            'x-timestamp': ts3,
+            'x-nonce': nonce3,
+            'x-request-id': req_id3,
+            'x-signature': self._game_sign(req_id3, ts3, nonce3),
+            'token': self.auth_token,
+            'jwtToken': new_jwt, 
+            'referer': f'https://caiyun.feixin.10086.cn:7071/portal/synthesisonet/index.html?inviter={self._encode_inviter(target_phone)}&sourceid=1120',
+            'accept': '*/*',
+            'x-requested-with': 'mark.via'
+        }
+        
+        try:
+            resp3 = self.session.get(url, headers=invite_headers, params={"inviter": target_phone}, timeout=10)
+            data = resp3.json()
+            if data.get('code') == 0:
+                self.log(f" ✅ 助力成功 -> {target_phone[:3]}****{target_phone[7:]}")
+                return True
+            else:
+                msg = data.get('msg', '未知错误')
+                # 如果真的是因为“助力过了”，你会在这里看到 msg 提示
+                self.log(f" ⚠️ 助力失败: {msg}") 
                 return False
+        except Exception as e:
+            self.log(f" ❌ 助力异常: {e}")
+            return False
 
     @catch_errors
     def run_upload_task(self):
