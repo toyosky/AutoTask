@@ -9,8 +9,12 @@ import uuid
 from datetime import datetime, timezone, timedelta
 
 # ================= 配置区域 =================
-if os.getenv("YDYP_CK"):
-    ydypCK = os.getenv("YDYP_CK")
+ydypCK = """
+Basic cGM6MTY2ODQwNzAzMjU6T2tNbmcyNVp8MXxSQ1N8MTc3MDQ2NjkyODk2NnxMUE1mejlNaU5ZbmpxRjlMcXR6MV8wT0ZyZ2xUTXU5ZTV6UF93NV9fYzVzTUZtMzN0RTZQbHZFVVAzOEVCbGtrRWxZUlNKVl84MmhBalBqYkE1dFZ1Ukoxc3BFMWpZZHlzWjNiRG9kTS5CZkp1dEdEOVFzbkh4NE1wZFJhRlU3N1RQWDlyazZRclJVZklmYThWZUpxU0dQcVpkVngxZFBiNVZyZU1lWEJxMzgt#16684070325#eQXxQR02m9owzXA8pSCPZm7BV8yxVkOOT1ZJ9kZj+fJLjUxJOQ8K4pud0CwKDdSxCTi6HBnt8pxf5XeDO/tXsZ9zdxdJ6rqDk7JwYjn/237Ym7awhU1sOREcgIxZtN7DyAPtiTIVKFg6nkYUIIKrDWAqfPyz0NVvpcrGTrCY1SH5HSUPv/29GZGEXDqn8Jx+wn6rjqqSJ5AaEbw7unZ9kESO2UAR9WjEV6yt4kINyOVuOUu4s7DBWrWhLG29o5WQnNsAg/2qk67tvJMfQqcp8g==#1258564792203660005
+Basic cGM6MTkwNTAyMTQ2NjA6NGtvemE4aEh8MXxSQ1N8MTc3MDQ2OTUyODcxOHxPXzYuZzFIYmNjakN5Q284MTc1Zmo1eXZJTFh5MjhneDQxWU1vOTQ3ZW4wMmlXU3huTTNBb2czaDRZbHVweWxlLjAzS295cTBTenU0cURrRFY0Q0wxUXZnQ1NCWHp5NGRzZEpwZ3FGNlpWV082N0FzeXhZNVJ6VjY2MGZxcGhJU0RQUE85eWwzNUIzeXB4YWVVRzZiYXBvOGV4OTAwcjRUbWlENWV2ZHVxRnct#19050214660#dwpm3o9X1pXy/jxhT+2Y5uud3b5HCai0dWm39U+X+SOmtVE9CjBxfdar2OBLtAkHJp3fxx+4IOJvT3YAXR0fGUIKtyi1W1z9DbdSb/Ank60fnoN9ePiLJEzu2pZ3BXxFz4E8LyeBV9ssqJCwTcIMTOp+F9DHCazMDruoBtLP22+iB18P+m/xzRJFXrwK7JjqgDq1GRzuOlQbSsFnNQITUHtXpXbz6KCcMT3K7uHGjcerG4LsQN1tVyxWS0EBtf4TBZBtLUB9MJbp6KaWmp6eDQ==#1258565601806899573
+Basic cGM6MTg4NTE3NjExNzM6NEFLa09CaGF8MXxSQ1N8MTc3MDI2NDI4MDMzMnxCM2twQXJpV2pPZ1BRa1lpVGx6am1sODJ5SkVZdzA4QjQwamhFaTRxc0NETmFwZ2lnR3N5d1ZUNURDOUV3SllCZGU1YllzeG05SnRFNlB1Wk51UVR2dng0OWl2Mm1fTnhyTE1JamV3TEl4c0R6Y1hlZGtpYUZGMGRhQmJCUGFDRndGQ0Y4Z2gzNUJyTngyMEVDWkdtM3VrSjZZbG5Sblo1UDVDaTA2WnpBTlkt#18851761173#Fg0Q0F5SmNeFcSKvCw2dzjtLsTgnSY7rxAppBNOx4fepJyTKUFXC/GRGPS0alrMIGCpCp0EpwNqSxhlUF4PCk4o3WPvUbv7BEU4jTv54Q/n1UpikOA5TGHJdzSAufoyIvYVJr0rPnkMCb3x4gMCvcQwq/6pZNgeKebprL9beWt1vNC+gS9GjQstnnYc9c2O4usEjTMXSmoTtmRA44AQ9NoYjsVRDhL2+tQnPDNHnj44ADBzzkV6R2yPlMx3OE8XhLgMpADuE/o5Ywh4gFdgVuw==#1039842059450400648
+
+"""
 
 GAME_ENABLED = True
 TARGET_SUCC = 5
@@ -213,28 +217,34 @@ class YP:
         
     @catch_errors
     def do_invite(self, target_phone):
-        """执行助力邀请（Via浏览器 伪装修正版）"""
+        """执行助力邀请（参数顺序修正版）"""
         self.log(f" 🔄 准备助力 {target_phone[:3]}****{target_phone[7:]}...")
         
-        # 【关键修改】定义一个纯浏览器的 UA，不带 MCloudApp 标识
-        # 这才是真正的 "Via浏览器" 在安卓手机上的样子
+        # 定义两种 Salt
+        WEB_SALT = "sekaMdYYLIZfbCfm"  # 步骤1 和 步骤2
+        APP_SALT = "seedMdYYLIZfbCxg"  # 步骤3
+        
         browser_ua = "Mozilla/5.0 (Linux; Android 13; PDRM00 Build/TP1A.220905.001) AppleWebKit/537.36 (KHTML, like Gecko) Version/4.0 Chrome/108.0.5359.128 Mobile Safari/537.36"
 
-        # ===== 步骤1：获取 ssoToken =====
+        # ==================== 步骤1：获取 ssoToken ====================
         query_url = "https://caiyun.feixin.10086.cn:7071/ycloud/api/cloud/userdomain/v2/querySpecToken"
         ts, req_id, nonce = str(int(time.time() * 1000)), str(uuid.uuid4()), str(uuid.uuid4())
         
+        # 签名公式: WEB_SALT + Req + Ts + Nonce + WEB_SALT
+        raw_sign_str = f"{WEB_SALT}{req_id}{ts}{nonce}{WEB_SALT}"
+        signature = hashlib.md5(raw_sign_str.encode('utf-8')).hexdigest()
+        
         query_headers = {
             'Host': 'caiyun.feixin.10086.cn:7071',
-            'User-Agent': browser_ua,  # 使用浏览器 UA
+            'User-Agent': browser_ua,
             'x-timestamp': ts,
             'x-nonce': nonce,
             'x-request-id': req_id,
-            'x-signature': self._game_sign(req_id, ts, nonce),
+            'x-signature': signature,
             'token': self.auth_token,
             'jwtToken': self.jwtHeaders.get('jwtToken'),
             'referer': f'https://caiyun.feixin.10086.cn:7071/portal/synthesisonet/index.html?inviter={self._encode_inviter(target_phone)}&sourceid=1120',
-            'x-requested-with': 'mark.via' # 保持 Via 标识
+            'x-requested-with': 'mark.via'
         }
         
         try:
@@ -244,32 +254,37 @@ class YP:
                 params={"targetSourceId": "001005"},
                 timeout=10
             )
-            # 调试：如果不成功，打印一下服务器到底回了什么
             json_res = resp1.json()
             sso_token = json_res.get('result')
-            
             if not sso_token:
-                # 打印详细错误信息，方便排查
-                self.log(f" ❌ ssoToken 为空，服务器返回: {json_res}")
+                self.log(f" ❌ ssoToken 为空: {json_res}")
                 return False
-            
             self.log(f" ✓ 已获取 ssoToken")
-            
         except Exception as e:
             self.log(f" ❌ 获取 ssoToken 异常: {e}")
             return False
         
-        # ===== 步骤2：刷新 jwtToken =====
+        # ==================== 步骤2：刷新 jwtToken ====================
         login_url = "https://caiyun.feixin.10086.cn:7071/portal/auth/v2/tyrzLogin.action"
         ts2, req_id2, nonce2 = str(int(time.time() * 1000)), str(uuid.uuid4()), str(uuid.uuid4())
         
+        # 【关键修正点】构造签名用的参数字符串
+        # JS 逻辑: n = {ssoToken: e, openAccount: 0}
+        # 这里的 stringify 应该是按顺序拼接，而不是按字母排序
+        # 正确顺序: ssoToken在前，openAccount在后
+        param_str = f"ssoToken={sso_token}&openAccount=0"
+        
+        # 签名公式: WEB_SALT + Req + Ts + Nonce + 参数字符串 + WEB_SALT
+        raw_sign_str2 = f"{WEB_SALT}{req_id2}{ts2}{nonce2}{param_str}{WEB_SALT}"
+        signature2 = hashlib.md5(raw_sign_str2.encode('utf-8')).hexdigest()
+        
         login_headers = {
             'Host': 'caiyun.feixin.10086.cn:7071',
-            'User-Agent': browser_ua, # 使用浏览器 UA
+            'User-Agent': browser_ua,
             'x-timestamp': ts2,
             'x-nonce': nonce2,
             'x-request-id': req_id2,
-            'x-signature': self._game_sign(req_id2, ts2, nonce2),
+            'x-signature': signature2, 
             'token': self.auth_token,
             'jwtToken': self.jwtHeaders.get('jwtToken'),
             'referer': f'https://caiyun.feixin.10086.cn:7071/portal/synthesisonet/index.html?inviter={self._encode_inviter(target_phone)}&sourceid=1120',
@@ -277,37 +292,44 @@ class YP:
         }
         
         try:
+            # 注意：发送请求时，params 字典的顺序不重要，requests 库会处理
+            # 重要的是上面的 param_str 必须和 JS 生成的一模一样
             resp2 = self.session.get(
                 login_url,
                 headers=login_headers,
                 params={"ssoToken": sso_token, "openAccount": "0"},
                 timeout=10
             )
+            
+            # 调试打印
+            # print(f"DEBUG Step2 ParamStr: {param_str}")
+            # print(f"DEBUG Step2 Resp: {resp2.text}")
+            
             new_jwt = resp2.json().get('result', {}).get('token')
             if not new_jwt:
                 self.log(f" ❌ 新 jwtToken 为空: {resp2.text}")
                 return False
-            
-            # 注意：这里我们只在当前函数内使用新token，不更新全局self.jwtHeaders
-            # 因为全局是APP环境，这里是浏览器环境，混用可能会有问题
             self.log(f" ✓ 已刷新 jwtToken")
-            
         except Exception as e:
             self.log(f" ❌ 刷新 jwtToken 异常: {e}")
             return False
         
-        # ===== 步骤3：执行助力 =====
+        # ==================== 步骤3：执行助力 ====================
         time.sleep(1) 
         url = "https://caiyun.feixin.10086.cn:7071/market/signin/hecheng1T/beinvite"
         ts3, req_id3, nonce3 = str(int(time.time() * 1000)), str(uuid.uuid4()), str(uuid.uuid4())
         
+        # 签名公式: APP_SALT + Req + Ts + Nonce + APP_SALT (回归最简模式，确认无手机号)
+        raw_sign_str3 = f"{APP_SALT}{req_id3}{ts3}{nonce3}{APP_SALT}"
+        signature3 = hashlib.md5(raw_sign_str3.encode('utf-8')).hexdigest()
+        
         invite_headers = {
             'Host': 'caiyun.feixin.10086.cn:7071',
-            'User-Agent': browser_ua, # 使用浏览器 UA
+            'User-Agent': browser_ua,
             'x-timestamp': ts3,
             'x-nonce': nonce3,
             'x-request-id': req_id3,
-            'x-signature': self._game_sign(req_id3, ts3, nonce3),
+            'x-signature': signature3,
             'token': self.auth_token,
             'jwtToken': new_jwt, 
             'referer': f'https://caiyun.feixin.10086.cn:7071/portal/synthesisonet/index.html?inviter={self._encode_inviter(target_phone)}&sourceid=1120',
@@ -322,9 +344,7 @@ class YP:
                 self.log(f" ✅ 助力成功 -> {target_phone[:3]}****{target_phone[7:]}")
                 return True
             else:
-                msg = data.get('msg', '未知错误')
-                # 如果真的是因为“助力过了”，你会在这里看到 msg 提示
-                self.log(f" ⚠️ 助力失败: {msg}") 
+                self.log(f" ⚠️ 助力失败: {data.get('msg')}") 
                 return False
         except Exception as e:
             self.log(f" ❌ 助力异常: {e}")
